@@ -1258,8 +1258,10 @@ if (is_multisite()) {
 // ─────────────────────────────────────────────────────────────
 // 12. WOOCOMMERCE (only if WooCommerce is active)
 // ─────────────────────────────────────────────────────────────
-if (class_exists('WooCommerce')) {
-    section('12. WOOCOMMERCE');
+section('12. WOOCOMMERCE');
+if (!class_exists('WooCommerce')) {
+    note('WooCommerce not detected — section skipped');
+} else {
 
     // WC version
     row('WooCommerce version', defined('WC_VERSION') ? WC_VERSION : (class_exists('WooCommerce') ? WC()->version : 'unknown'));
