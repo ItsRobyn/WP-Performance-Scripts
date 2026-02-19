@@ -440,23 +440,141 @@ if ($savequeries_on && !empty($wpdb->queries)) {
         $wpdb->num_queries > 100 ? 'WARN' : 'OK');
 }
 
-// Hooks
+// ── Hook analysis ─────────────────────────────────────────────
+// $wp_filter is WordPress's global hook registry, populated as plugins
+// and themes call add_action()/add_filter() during load. By the time
+// wp eval-file runs (after plugins_loaded + init), it reflects the full
+// set of hooks registered for a typical front-end request.
 global $wp_filter;
 $hook_count = isset($wp_filter) ? count($wp_filter) : 0;
-row('Registered hooks', $hook_count);
+row('Registered hook names', $hook_count);
 
-// Count callbacks
-$total_callbacks = 0;
+// Walk every hook and tally callbacks, priorities, and per-source counts
+$total_callbacks  = 0;
+$hooks_by_count   = []; // hook_name => callback count
+$callbacks_by_src = []; // plugin/theme slug => callback count
+$priority_spread  = []; // hook_name => [min_priority, max_priority]
+
+// Known core hooks that are heavy by design — not worth flagging
+$core_hooks = [
+    'plugins_loaded', 'init', 'wp_loaded', 'wp', 'template_redirect',
+    'wp_head', 'wp_footer', 'wp_enqueue_scripts', 'admin_init',
+    'admin_menu', 'admin_notices', 'save_post', 'the_content',
+    'sanitize_text_field', 'esc_html', 'esc_attr',
+];
+
 if (isset($wp_filter)) {
-    foreach ($wp_filter as $hook) {
-        if (is_object($hook) && isset($hook->callbacks)) {
-            foreach ($hook->callbacks as $priority) {
-                $total_callbacks += count($priority);
+    foreach ($wp_filter as $hook_name => $hook_obj) {
+        if (!is_object($hook_obj) || !isset($hook_obj->callbacks)) continue;
+
+        $hook_cb_count = 0;
+        $priorities    = [];
+
+        foreach ($hook_obj->callbacks as $priority => $callbacks) {
+            $priorities[]   = (int) $priority;
+            $hook_cb_count += count($callbacks);
+
+            foreach ($callbacks as $cb_id => $cb_data) {
+                $fn = $cb_data['function'] ?? null;
+
+                // Resolve the callback to a file path for source attribution
+                try {
+                    if (is_string($fn) && function_exists($fn)) {
+                        $ref  = new ReflectionFunction($fn);
+                        $file = $ref->getFileName();
+                    } elseif (is_array($fn) && count($fn) === 2) {
+                        $ref  = is_object($fn[0])
+                            ? new ReflectionMethod(get_class($fn[0]), $fn[1])
+                            : new ReflectionMethod($fn[0], $fn[1]);
+                        $file = $ref->getFileName();
+                    } elseif ($fn instanceof Closure) {
+                        $ref  = new ReflectionFunction($fn);
+                        $file = $ref->getFileName();
+                    } else {
+                        $file = null;
+                    }
+                } catch (Throwable $e) {
+                    $file = null;
+                }
+
+                if ($file) {
+                    // Attribute to plugin, theme, mu-plugin, or core
+                    $rel = str_replace(WP_CONTENT_DIR . '/', '', $file);
+                    if (str_starts_with($rel, 'plugins/')) {
+                        $parts = explode('/', $rel);
+                        $src   = 'plugin: ' . ($parts[1] ?? '?');
+                    } elseif (str_starts_with($rel, 'themes/')) {
+                        $parts = explode('/', $rel);
+                        $src   = 'theme: ' . ($parts[1] ?? '?');
+                    } elseif (str_starts_with($rel, 'mu-plugins/')) {
+                        $src   = 'mu-plugin';
+                    } elseif (str_contains($file, ABSPATH . 'wp-includes/')) {
+                        $src   = 'wp-core';
+                    } elseif (str_contains($file, ABSPATH . 'wp-admin/')) {
+                        $src   = 'wp-admin';
+                    } else {
+                        $src   = 'other';
+                    }
+                    $callbacks_by_src[$src] = ($callbacks_by_src[$src] ?? 0) + 1;
+                }
             }
+        }
+
+        $total_callbacks              += $hook_cb_count;
+        $hooks_by_count[$hook_name]    = $hook_cb_count;
+        if ($priorities) {
+            $priority_spread[$hook_name] = [min($priorities), max($priorities)];
         }
     }
 }
+
 row('Total hook callbacks', $total_callbacks, $total_callbacks > 5000 ? 'WARN' : 'OK');
+
+// Callbacks by source
+if ($callbacks_by_src) {
+    arsort($callbacks_by_src);
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Callbacks by source:';
+    foreach ($callbacks_by_src as $src => $count) {
+        row('  ' . $src, $count);
+    }
+}
+
+// Top 15 hooks by callback count, excluding known-heavy core hooks
+arsort($hooks_by_count);
+$notable_hooks = array_filter(
+    $hooks_by_count,
+    fn($name) => !in_array($name, $core_hooks),
+    ARRAY_FILTER_USE_KEY
+);
+
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Top 15 hooks by callback count (excluding routine core hooks):';
+$shown = 0;
+foreach ($notable_hooks as $name => $count) {
+    if ($shown++ >= 15) break;
+    $spread  = isset($priority_spread[$name])
+        ? ' [priority ' . $priority_spread[$name][0] . '–' . $priority_spread[$name][1] . ']'
+        : '';
+    $flag    = $count > 20 ? ' [WARN]' : '';
+    $GLOBALS['out'][] = sprintf("    %-45s %d callbacks%s%s",
+        substr($name, 0, 45), $count, $spread, $flag);
+}
+
+// Hooks with unusually wide priority spreads (can indicate load-order conflicts)
+$wide_spread = array_filter($priority_spread, fn($p) => ($p[1] - $p[0]) > 100);
+if ($wide_spread) {
+    arsort($wide_spread); // sort by hook name; could sort by spread size
+    uasort($wide_spread, fn($a, $b) => ($b[1] - $b[0]) <=> ($a[1] - $a[0]));
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Hooks with wide priority spreads (possible load-order conflicts):';
+    $shown = 0;
+    foreach ($wide_spread as $name => $p) {
+        if ($shown++ >= 10) break;
+        $GLOBALS['out'][] = sprintf("    %-45s priority %d–%d (spread: %d)",
+            substr($name, 0, 45), $p[0], $p[1], $p[1] - $p[0]);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────
 // 6. CRON
