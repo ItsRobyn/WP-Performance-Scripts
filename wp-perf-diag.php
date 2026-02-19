@@ -1181,11 +1181,30 @@ $GLOBALS['out'][] = '';
 $theme = wp_get_theme();
 $parent = $theme->parent();
 $GLOBALS['out'][] = '  Active theme:';
+// Fetch theme update transient once — keyed by stylesheet (directory name)
+$theme_updates = get_site_transient('update_themes');
+$theme_stylesheet  = $theme->get_stylesheet();   // child theme dir
+$parent_stylesheet = $parent ? $parent->get_stylesheet() : null; // parent dir
+
+$theme_new_ver  = $theme_updates->response[$theme_stylesheet]['new_version']  ?? null;
+$parent_new_ver = $parent_stylesheet
+    ? ($theme_updates->response[$parent_stylesheet]['new_version'] ?? null)
+    : null;
+
 row('  Theme name',    $theme->get('Name'));
-row('  Theme version', $theme->get('Version'));
+$theme_ver_display = $theme->get('Version');
+if ($theme_new_ver) {
+    $theme_ver_display .= " (update available: $theme_new_ver)";
+}
+row('  Theme version', $theme_ver_display, $theme_new_ver ? 'WARN' : 'OK');
+
 row('  Is child theme', $parent ? 'Yes (parent: ' . $parent->get('Name') . ')' : 'No');
 if ($parent) {
-    row('  Parent theme version', $parent->get('Version'));
+    $parent_ver_display = $parent->get('Version');
+    if ($parent_new_ver) {
+        $parent_ver_display .= " (update available: $parent_new_ver)";
+    }
+    row('  Parent theme version', $parent_ver_display, $parent_new_ver ? 'WARN' : 'OK');
 }
 
 // Flag known resource-heavy themes
@@ -1424,6 +1443,10 @@ if (!(defined('DISABLE_WP_CRON') && DISABLE_WP_CRON)) $issues[] = 'WP-Cron runs 
 if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
 if (isset($wp_latest_ver) && $wp_latest_ver && version_compare($wp_current_ver, $wp_latest_ver, '<'))
     $issues[] = "WordPress is outdated ($wp_current_ver → $wp_latest_ver)";
+if (isset($theme_new_ver) && $theme_new_ver)
+    $issues[] = "Active theme \"" . $theme->get('Name') . "\" has an update available (→ $theme_new_ver)";
+if (isset($parent_new_ver) && $parent_new_ver)
+    $issues[] = "Parent theme \"" . $parent->get('Name') . "\" has an update available (→ $parent_new_ver)";
 // OPcache: only recommend requesting it from Platform Team if the site
 // has enough PHP complexity to make a meaningful difference — i.e. a page
 // builder, high plugin count, or high asset count. Low-complexity sites
