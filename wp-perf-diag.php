@@ -116,7 +116,28 @@ function ms(float $seconds): string {
 section('1. ENVIRONMENT');
 
 row('PHP Version',        PHP_VERSION,           version_compare(PHP_VERSION, '8.0', '>=') ? 'OK' : 'WARN');
-row('WordPress Version',  get_bloginfo('version'));
+// WordPress version — compare against latest from api.wordpress.org
+$wp_current_ver = get_bloginfo('version');
+$wp_ver_response = wp_remote_get('https://api.wordpress.org/core/version-check/1.7/', [
+    'timeout'   => 5,
+    'sslverify' => false,
+    'headers'   => ['Accept' => 'application/json'],
+]);
+$wp_latest_ver = null;
+if (!is_wp_error($wp_ver_response)) {
+    $wp_ver_body = json_decode(wp_remote_retrieve_body($wp_ver_response), true);
+    $wp_latest_ver = $wp_ver_body['offers'][0]['version'] ?? null;
+}
+if ($wp_latest_ver) {
+    $wp_outdated = version_compare($wp_current_ver, $wp_latest_ver, '<');
+    row('WordPress Version',
+        $wp_outdated
+            ? "$wp_current_ver (latest: $wp_latest_ver)"
+            : "$wp_current_ver (up to date)",
+        $wp_outdated ? 'WARN' : 'OK');
+} else {
+    row('WordPress Version', $wp_current_ver . ' (could not check latest)', 'INFO');
+}
 row('WP Multisite',       is_multisite() ? 'Yes' : 'No');
 row('WP Debug',           defined('WP_DEBUG') && WP_DEBUG ? 'ON' : 'off', defined('WP_DEBUG') && WP_DEBUG ? 'WARN' : 'OK');
 row('WP Debug Log',       defined('WP_DEBUG_LOG') && WP_DEBUG_LOG ? 'ON' : 'off');
@@ -1401,6 +1422,8 @@ if ((int)$revision_count > 500)  $issues[] = "High revision count ({$revision_co
 if ((int)$spam_comments > 500)   $issues[] = "High spam comment count — empty spam from Dashboard > Comments";
 if (!(defined('DISABLE_WP_CRON') && DISABLE_WP_CRON)) $issues[] = 'WP-Cron runs on HTTP requests — consider DISABLE_WP_CRON with server cron';
 if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
+if (isset($wp_latest_ver) && $wp_latest_ver && version_compare($wp_current_ver, $wp_latest_ver, '<'))
+    $issues[] = "WordPress is outdated ($wp_current_ver → $wp_latest_ver)";
 // OPcache: only recommend requesting it from Platform Team if the site
 // has enough PHP complexity to make a meaningful difference — i.e. a page
 // builder, high plugin count, or high asset count. Low-complexity sites
