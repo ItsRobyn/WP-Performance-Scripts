@@ -116,7 +116,6 @@ function ms(float $seconds): string {
 section('1. ENVIRONMENT');
 
 row('PHP Version',        PHP_VERSION,           version_compare(PHP_VERSION, '8.0', '>=') ? 'OK' : 'WARN');
-row('PHP SAPI',           php_sapi_name());
 row('WordPress Version',  get_bloginfo('version'));
 row('WP Multisite',       is_multisite() ? 'Yes' : 'No');
 row('WP Debug',           defined('WP_DEBUG') && WP_DEBUG ? 'ON' : 'off', defined('WP_DEBUG') && WP_DEBUG ? 'WARN' : 'OK');
@@ -125,9 +124,6 @@ row('Script Debug',       defined('SCRIPT_DEBUG') && SCRIPT_DEBUG ? 'ON' : 'off'
 row('WP Memory Limit',    WP_MEMORY_LIMIT);
 row('WP Max Memory Limit', defined('WP_MAX_MEMORY_LIMIT') ? WP_MAX_MEMORY_LIMIT : 'not set');
 row('PHP memory_limit',   ini_get('memory_limit'));
-row('PHP max_execution_time', ini_get('max_execution_time') . 's');
-row('PHP upload_max_filesize', ini_get('upload_max_filesize'));
-row('PHP post_max_size',  ini_get('post_max_size'));
 $opcache_enabled = function_exists('opcache_get_status') && @opcache_get_status() !== false;
 row('OPcache enabled', $opcache_enabled ? 'Yes' : 'No', $opcache_enabled ? 'OK' : 'INFO');
 
@@ -148,7 +144,10 @@ if (function_exists('opcache_get_status')) {
     }
 }
 
-row('Server Software', $_SERVER['SERVER_SOFTWARE'] ?? 'unknown');
+// Server Software only shown for non-CLI (not meaningful when running via WP-CLI)
+if (!$is_cli && isset($_SERVER['SERVER_SOFTWARE'])) {
+    row('Server Software', $_SERVER['SERVER_SOFTWARE']);
+}
 row('Site URL',        get_site_url());
 row('Home URL',        get_home_url());
 row('Active Theme',    wp_get_theme()->get('Name') . ' v' . wp_get_theme()->get('Version'));
@@ -170,12 +169,6 @@ row('MySQL/MariaDB Version', $db_ver ?? 'unknown');
 
 // Table prefix
 row('Table Prefix', $wpdb->prefix);
-
-// Check for slow query log
-$slow_log_row = $wpdb->get_row("SHOW VARIABLES LIKE 'slow_query_log'");
-$slow_qs_row  = $wpdb->get_row("SHOW VARIABLES LIKE 'long_query_time'");
-row('Slow Query Log',  $slow_log_row->Value ?? 'unknown');
-row('Long Query Time', $slow_qs_row->Value  ?? 'unknown');
 
 // DB table sizes — use SHOW TABLE STATUS (works on managed hosts; information_schema often restricted)
 $tables = $wpdb->get_results("SHOW TABLE STATUS");
@@ -1023,7 +1016,6 @@ if ($dir_sizes_raw) {
 // Writability checks
 $GLOBALS['out'][] = '';
 $write_paths = [
-    'ABSPATH'        => ABSPATH,
     'WP_CONTENT_DIR' => WP_CONTENT_DIR,
     'Uploads dir'    => $upload_dir ?? 'unknown',
 ];
