@@ -1534,13 +1534,53 @@ if (isset($debug_size) && $debug_size > 5242880)
 if (isset($php_log_size) && $php_log_size > 10485760)
     $issues[] = 'PHP error_log is very large (' . bytes($php_log_size) . ') — investigate and rotate';
 
+// ── Positives ────────────────────────────────────────────────
+
+// Caching
 if ($using_external_cache)       $wins[] = 'External object cache is active';
 if ($is_batcache)                $wins[] = 'Batcache page caching is present';
-if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for this request';
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
+
+// Performance
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
+if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for this request';
+
+// PHP / WordPress versions
+if (isset($php_recommended) && !version_compare(PHP_VERSION, $php_recommended, '<'))
+    $wins[] = 'PHP ' . PHP_VERSION . ' meets WordPress recommended version';
+if (isset($wp_latest_ver) && $wp_latest_ver && !version_compare($wp_current_ver, $wp_latest_ver, '<'))
+    $wins[] = 'WordPress is up to date (' . $wp_current_ver . ')';
+
+// Plugins
+if ($plugins_needing_update === 0)
+    $wins[] = 'All plugins are up to date';
+
+// Theme
+if (isset($theme_new_ver) && !$theme_new_ver && isset($parent_new_ver) && !$parent_new_ver)
+    $wins[] = 'Active theme is up to date';
+elseif (isset($theme_new_ver) && !$theme_new_ver && !$parent)
+    $wins[] = 'Active theme is up to date';
+
+// DB health
 if (isset($orphaned_postmeta) && (int)$orphaned_postmeta === 0) $wins[] = 'No orphaned postmeta';
+if (isset($orphaned_usermeta) && (int)$orphaned_usermeta === 0) $wins[] = 'No orphaned usermeta';
+if (isset($fragmented) && count($fragmented) === 0)             $wins[] = 'No table fragmentation detected';
+if (isset($index_issues) && $index_issues === 0)                $wins[] = 'All core table indexes present';
+if ((int)$expired_transients === 0)                             $wins[] = 'No expired transients in DB';
+if ((int)$revision_count <= 100)                                $wins[] = 'Post revision count is healthy (' . $revision_count . ')';
+if ($autoload_kb <= 200)                                        $wins[] = 'Autoloaded options size is healthy (' . $autoload_kb . ' KB)';
+
+// Cron
 if (isset($fast_hooks) && count($fast_hooks) === 0) $wins[] = 'No unusually fast cron scheduling';
+if ($overdue === 0)                                  $wins[] = 'No overdue cron events';
+
+// WooCommerce (only meaningful if WC is active)
+if (class_exists('WooCommerce')) {
+    if (isset($wc_new_ver) && !($wc_new_ver && version_compare($wc_current_ver, $wc_new_ver, '<')))
+        $wins[] = 'WooCommerce is up to date (' . ($wc_current_ver ?? '') . ')';
+    if (isset($abandoned) && (int)$abandoned === 0)
+        $wins[] = 'No expired WooCommerce sessions';
+}
 
 $GLOBALS['out'][] = '';
 if ($wins) {
