@@ -953,19 +953,26 @@ if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
 // has enough PHP complexity to make a meaningful difference — i.e. a page
 // builder, high plugin count, or high asset count. Low-complexity sites
 // wouldn't justify the request.
-$has_builder = !empty(array_filter($found_perf_plugins, fn($p) => $p[1] === 'builder'));
+$has_builder        = !empty(array_filter($found_perf_plugins, fn($p) => $p[1] === 'builder'));
+$high_plugin_count  = count($active_plugins) >= 40;
+$high_scripts       = $enqueued_scripts > 20;
+$high_styles        = $enqueued_styles > 15;
+$other_signals      = (int)$has_builder + (int)$high_scripts + (int)$high_styles;
+
+// Show OPcache recommendation only when there's meaningful PHP complexity:
+// - 40+ plugins alone, OR
+// - 40+ plugins plus at least one other signal, OR
+// - both high scripts AND high styles (without needing high plugin count)
 $opcache_worthwhile = !$opcache_enabled && (
-    count($active_plugins) > 20 ||
-    $has_builder ||
-    $enqueued_scripts > 20 ||
-    $enqueued_styles > 15
+    $high_plugin_count ||
+    $other_signals >= 2
 );
 if ($opcache_worthwhile) {
     $reasons = [];
-    if (count($active_plugins) > 20) $reasons[] = count($active_plugins) . ' active plugins';
-    if ($has_builder)                 $reasons[] = 'page builder active';
-    if ($enqueued_scripts > 20)       $reasons[] = $enqueued_scripts . ' enqueued scripts';
-    if ($enqueued_styles > 15)        $reasons[] = $enqueued_styles . ' enqueued styles';
+    if ($high_plugin_count) $reasons[] = count($active_plugins) . ' active plugins';
+    if ($has_builder)       $reasons[] = 'page builder active';
+    if ($high_scripts)      $reasons[] = $enqueued_scripts . ' enqueued scripts';
+    if ($high_styles)       $reasons[] = $enqueued_styles . ' enqueued styles';
     $issues[] = 'OPcache not enabled — consider requesting from Platform Team (' . implode(', ', $reasons) . ')';
 }
 if ($enqueued_scripts > 20)      $issues[] = "High enqueued script count ($enqueued_scripts) — check for bloat";
