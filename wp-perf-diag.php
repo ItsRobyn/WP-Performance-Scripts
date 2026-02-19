@@ -53,19 +53,22 @@ if (!defined('ABSPATH')) {
 }
 
 // ── Output helpers ────────────────────────────────────────────
-$out = [];
+// Use $GLOBALS directly — WP-CLI eval-file wraps execution in a function
+// scope, so `global $out` inside helpers won't bind to the file-level var.
+$GLOBALS['out']    = [];
+$GLOBALS['is_cli'] = $is_cli;
 
 function section(string $title): void {
-    global $out, $is_cli;
+    $is_cli = $GLOBALS['is_cli'];
     $bar = str_repeat('─', 60);
-    $out[] = '';
-    $out[] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
-    $out[] = $is_cli ? "\033[1;33m  $title\033[0m" : "  $title";
-    $out[] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = $is_cli ? "\033[1;33m  $title\033[0m" : "  $title";
+    $GLOBALS['out'][] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
 }
 
 function row(string $label, $value, string $status = ''): void {
-    global $out, $is_cli;
+    $is_cli = $GLOBALS['is_cli'];
     $statusColors = ['OK' => '32', 'WARN' => '33', 'BAD' => '31', 'INFO' => '36', '' => '0'];
     $color = $statusColors[$status] ?? '0';
     $badge = $status ? "[$status]" : '';
@@ -73,27 +76,27 @@ function row(string $label, $value, string $status = ''): void {
         $badge = "\033[{$color}m$badge\033[0m";
     }
     $line = sprintf("  %-35s %s %s", $label, $value, $badge);
-    $out[] = $line;
+    $GLOBALS['out'][] = $line;
 }
 
 function note(string $msg): void {
-    global $out, $is_cli;
-    $out[] = $is_cli ? "  \033[2m↳ $msg\033[0m" : "    ↳ $msg";
+    $is_cli = $GLOBALS['is_cli'];
+    $GLOBALS['out'][] = $is_cli ? "  \033[2m↳ $msg\033[0m" : "    ↳ $msg";
 }
 
 function warn(string $msg): void {
-    global $out, $is_cli;
-    $out[] = $is_cli ? "  \033[33m⚠ $msg\033[0m" : "  ⚠ $msg";
+    $is_cli = $GLOBALS['is_cli'];
+    $GLOBALS['out'][] = $is_cli ? "  \033[33m⚠ $msg\033[0m" : "  ⚠ $msg";
 }
 
 function good(string $msg): void {
-    global $out, $is_cli;
-    $out[] = $is_cli ? "  \033[32m✓ $msg\033[0m" : "  ✓ $msg";
+    $is_cli = $GLOBALS['is_cli'];
+    $GLOBALS['out'][] = $is_cli ? "  \033[32m✓ $msg\033[0m" : "  ✓ $msg";
 }
 
 function bad(string $msg): void {
-    global $out, $is_cli;
-    $out[] = $is_cli ? "  \033[31m✗ $msg\033[0m" : "  ✗ $msg";
+    $is_cli = $GLOBALS['is_cli'];
+    $GLOBALS['out'][] = $is_cli ? "  \033[31m✗ $msg\033[0m" : "  ✗ $msg";
 }
 
 function bytes(int $b): string {
@@ -178,15 +181,15 @@ row('Long Query Time', $slow_qs_row->Value  ?? 'unknown');
 $tables = $wpdb->get_results("SHOW TABLE STATUS");
 if ($tables) {
     usort($tables, fn($a, $b) => (($b->Data_length + $b->Index_length) <=> ($a->Data_length + $a->Index_length)));
-    $out[] = '';
-    $out[] = '  Top tables by size:';
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Top tables by size:';
     foreach (array_slice($tables, 0, 15) as $t) {
         $size = (int)$t->Data_length + (int)$t->Index_length;
         $rows = number_format((int)$t->Rows);
         row('  ' . $t->Name, bytes($size) . " (~{$rows} rows)");
     }
 } else {
-    $out[] = '  Top tables by size: (unavailable — insufficient permissions)';
+    $GLOBALS['out'][] = '  Top tables by size: (unavailable — insufficient permissions)';
 }
 
 // Check autoload options size
@@ -209,7 +212,7 @@ if ($autoload_kb > 200) {
         ORDER BY size DESC
         LIMIT 10
     ");
-    $out[] = '  Largest autoloaded options:';
+    $GLOBALS['out'][] = '  Largest autoloaded options:';
     foreach ($big_autoloads as $opt) {
         row('    ' . substr($opt->option_name, 0, 40), bytes((int)$opt->size));
     }
@@ -288,8 +291,8 @@ if (isset($wp_object_cache) && method_exists($wp_object_cache, 'stats')) {
     $wp_object_cache->stats();
     $stats_output = ob_get_clean();
     if ($stats_output) {
-        $out[] = '  Cache stats output captured (raw):';
-        $out[] = '  ' . strip_tags(str_replace('<br />', "\n  ", $stats_output));
+        $GLOBALS['out'][] = '  Cache stats output captured (raw):';
+        $GLOBALS['out'][] = '  ' . strip_tags(str_replace('<br />', "\n  ", $stats_output));
     }
 }
 
@@ -320,14 +323,14 @@ row('Plugins needing updates',   $plugins_needing_update, $plugins_needing_updat
 
 // List plugins with available updates
 if ($plugins_needing_update > 0 && isset($update_transient->response)) {
-    $out[] = '  Plugins with available updates:';
+    $GLOBALS['out'][] = '  Plugins with available updates:';
     foreach ($update_transient->response as $slug => $data) {
         $current = $all_plugins[$slug]['Version'] ?? '?';
         $new_ver = $data->new_version ?? '?';
         $name    = $all_plugins[$slug]['Name'] ?? $slug;
-        $out[] = sprintf("    %-45s %s → %s", substr($name, 0, 45), $current, $new_ver);
+        $GLOBALS['out'][] = sprintf("    %-45s %s → %s", substr($name, 0, 45), $current, $new_ver);
     }
-    $out[] = '';
+    $GLOBALS['out'][] = '';
 }
 
 // Flag known performance-impactful plugins
@@ -392,20 +395,20 @@ foreach ($perf_plugins as $slug => $info) {
 }
 
 if ($found_perf_plugins) {
-    $out[] = '  Notable active plugins:';
+    $GLOBALS['out'][] = '  Notable active plugins:';
     foreach ($found_perf_plugins as $p) {
         row('  ' . $p[0], '[' . $p[1] . ']');
     }
 }
 
 // List all active plugins with version
-$out[] = '';
-$out[] = '  All active plugins:';
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  All active plugins:';
 foreach ($active_plugins as $plugin_file) {
     $plugin_data = $all_plugins[$plugin_file] ?? null;
     $name    = $plugin_data ? $plugin_data['Name'] : $plugin_file;
     $version = $plugin_data ? 'v' . $plugin_data['Version'] : '';
-    $out[] = sprintf("    %-50s %s", substr($name, 0, 50), $version);
+    $GLOBALS['out'][] = sprintf("    %-50s %s", substr($name, 0, 50), $version);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -428,9 +431,9 @@ if ($savequeries_on && !empty($wpdb->queries)) {
     // Slowest queries
     $sorted = $wpdb->queries;
     usort($sorted, fn($a, $b) => $b[1] <=> $a[1]);
-    $out[] = '  Slowest 5 queries:';
+    $GLOBALS['out'][] = '  Slowest 5 queries:';
     foreach (array_slice($sorted, 0, 5) as $q) {
-        $out[] = sprintf("    %s | %s", ms($q[1]), substr($q[0], 0, 120));
+        $GLOBALS['out'][] = sprintf("    %s | %s", ms($q[1]), substr($q[0], 0, 120));
     }
 } else {
     row('Queries (estimate)', $wpdb->num_queries . ' (add SAVEQUERIES=true for detail)',
@@ -539,8 +542,8 @@ if (is_wp_error($response)) {
         'surrogate-control', 'x-proxy-cache',
     ];
 
-    $out[] = '';
-    $out[] = '  Cache & CDN headers:';
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Cache & CDN headers:';
     foreach ($cache_headers as $h) {
         $val = $headers->offsetGet($h);
         if ($val) {
@@ -595,7 +598,7 @@ if (is_wp_error($response)) {
     }
 
     // Second request to check if cache kicks in
-    $out[] = '';
+    $GLOBALS['out'][] = '';
     note("Making second request to check cache hit...");
     $start2   = microtime(true);
     $response2 = wp_remote_get($home_url, [
@@ -634,7 +637,7 @@ section('8b. INCOMING COOKIES (sent by browser this request)');
 
 note('These are cookies the browser sent with this request — equivalent to DevTools > Application > Cookies.');
 note('Run via WP-CLI for most accurate results (no browser cookies); web access reflects a real browser session.');
-$out[] = '';
+$GLOBALS['out'][] = '';
 
 if (empty($_COOKIE)) {
     good('No cookies sent with this request');
@@ -655,7 +658,7 @@ if (empty($_COOKIE)) {
     }
 
     row('Total cookies present', count($all_cookies));
-    $out[] = '';
+    $GLOBALS['out'][] = '';
 
     if ($wp_cookies) {
         bad('WordPress cookies present (' . count($wp_cookies) . ') — request will bypass page cache:');
@@ -664,7 +667,7 @@ if (empty($_COOKIE)) {
             row('  ' . $name, $display);
         }
         note('wp_/wordpress_ cookies are typically set on login. If seen on anonymous requests, a plugin may be misusing sessions.');
-        $out[] = '';
+        $GLOBALS['out'][] = '';
     }
 
     if ($woo_cookies) {
@@ -674,7 +677,7 @@ if (empty($_COOKIE)) {
             row('  ' . $name, $display);
         }
         note('woocommerce_ cookies on non-cart/checkout pages suggest session handling is too broad.');
-        $out[] = '';
+        $GLOBALS['out'][] = '';
     }
 
     if ($other_cookies) {
@@ -686,7 +689,7 @@ if (empty($_COOKIE)) {
     }
 
     if ($wp_cookies || $woo_cookies) {
-        $out[] = '';
+        $GLOBALS['out'][] = '';
         warn('Cache-breaking cookies detected. If this is an anonymous/logged-out request, investigate which plugin is setting these.');
     }
 }
@@ -818,24 +821,24 @@ if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for t
 if (function_exists('opcache_get_status') && @opcache_get_status() !== false) $wins[] = 'OPcache is enabled';
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
 
-$out[] = '';
+$GLOBALS['out'][] = '';
 if ($wins) {
-    $out[] = '  ✓ Positives:';
+    $GLOBALS['out'][] = '  ✓ Positives:';
     foreach ($wins as $w) good("  $w");
 }
 
-$out[] = '';
+$GLOBALS['out'][] = '';
 if ($issues) {
-    $out[] = '  ⚠ Issues/Recommendations:';
+    $GLOBALS['out'][] = '  ⚠ Issues/Recommendations:';
     foreach ($issues as $i) warn("  $i");
 } else {
     good('  No major issues detected!');
 }
 
-$out[] = '';
-$out[] = '  Generated: ' . date('Y-m-d H:i:s T');
-$out[] = '  Site: ' . get_site_url();
-$out[] = '';
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Generated: ' . date('Y-m-d H:i:s T');
+$GLOBALS['out'][] = '  Site: ' . get_site_url();
+$GLOBALS['out'][] = '';
 
 // ── Output ────────────────────────────────────────────────────
 if (!$is_cli) {
@@ -850,4 +853,4 @@ while (ob_get_level() > 0) {
     ob_end_clean();
 }
 
-echo implode("\n", $out) . "\n";
+echo implode("\n", $GLOBALS['out']) . "\n";
