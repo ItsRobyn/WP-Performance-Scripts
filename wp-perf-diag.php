@@ -1260,14 +1260,6 @@ $orphaned_terms = $wpdb->get_var("
 row('Orphaned term relationships', $orphaned_terms,
     (int)$orphaned_terms > 500 ? 'WARN' : ((int)$orphaned_terms > 0 ? 'INFO' : 'OK'));
 
-// ── xdebug detection ─────────────────────────────────────────
-$xdebug_loaded = in_array('xdebug', get_loaded_extensions());
-row('Xdebug loaded', $xdebug_loaded ? 'YES' : 'No',
-    $xdebug_loaded ? 'WARN' : 'OK');
-if ($xdebug_loaded) {
-    warn('Xdebug is active — significant performance overhead. Disable in production.');
-}
-
 // ── Multisite-specific ───────────────────────────────────────
 if (is_multisite()) {
     $GLOBALS['out'][] = '';
@@ -1289,8 +1281,14 @@ if (!class_exists('WooCommerce')) {
     note('WooCommerce not detected — section skipped');
 } else {
 
-    // WC version
-    row('WooCommerce version', defined('WC_VERSION') ? WC_VERSION : (class_exists('WooCommerce') ? WC()->version : 'unknown'));
+    // WC version — check update_plugins transient for available update
+    $wc_current_ver = defined('WC_VERSION') ? WC_VERSION : (WC()->version ?? 'unknown');
+    $wc_new_ver = $update_transient->response['woocommerce/woocommerce.php']->new_version ?? null;
+    $wc_ver_display = $wc_current_ver;
+    if ($wc_new_ver && version_compare($wc_current_ver, $wc_new_ver, '<')) {
+        $wc_ver_display .= " (update available: $wc_new_ver)";
+    }
+    row('WooCommerce version', $wc_ver_display, ($wc_new_ver && version_compare($wc_current_ver, $wc_new_ver, '<')) ? 'WARN' : 'OK');
 
     // ── HPOS (High-Performance Order Storage) ───────────────
     $hpos_enabled = get_option('woocommerce_feature_hpos_enabled') === 'yes'
@@ -1479,6 +1477,8 @@ if (isset($theme_new_ver) && $theme_new_ver)
     $issues[] = "Active theme \"" . $theme->get('Name') . "\" has an update available (→ $theme_new_ver)";
 if (isset($parent_new_ver) && $parent_new_ver)
     $issues[] = "Parent theme \"" . $parent->get('Name') . "\" has an update available (→ $parent_new_ver)";
+if (isset($wc_new_ver) && $wc_new_ver && isset($wc_current_ver) && version_compare($wc_current_ver, $wc_new_ver, '<'))
+    $issues[] = "WooCommerce is outdated ($wc_current_ver → $wc_new_ver)";
 // OPcache: only recommend requesting it from Platform Team if the site
 // has enough PHP complexity to make a meaningful difference — i.e. a page
 // builder, high plugin count, or high asset count. Low-complexity sites
@@ -1534,16 +1534,11 @@ if (isset($debug_size) && $debug_size > 5242880)
 if (isset($php_log_size) && $php_log_size > 10485760)
     $issues[] = 'PHP error_log is very large (' . bytes($php_log_size) . ') — investigate and rotate';
 
-// WordPress-specific
-if ($xdebug_loaded)
-    $issues[] = 'Xdebug is loaded — disable in production';
-
 if ($using_external_cache)       $wins[] = 'External object cache is active';
 if ($is_batcache)                $wins[] = 'Batcache page caching is present';
 if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for this request';
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
-if (!$xdebug_loaded)             $wins[] = 'Xdebug not loaded';
 if (isset($orphaned_postmeta) && (int)$orphaned_postmeta === 0) $wins[] = 'No orphaned postmeta';
 if (isset($fast_hooks) && count($fast_hooks) === 0) $wins[] = 'No unusually fast cron scheduling';
 
