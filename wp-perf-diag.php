@@ -247,6 +247,80 @@ row('Trashed posts',       $trash_posts);
 $spam_comments = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->comments} WHERE comment_approved = 'spam'");
 row('Spam comments',       $spam_comments, (int)$spam_comments > 500 ? 'WARN' : 'OK');
 
+// ── DB: Table fragmentation ──────────────────────────────────
+// Data_free is already in the SHOW TABLE STATUS results we fetched above.
+if ($tables) {
+    $fragmented = [];
+    foreach ($tables as $t) {
+        $free = (int)$t->Data_free;
+        $used = (int)$t->Data_length + (int)$t->Index_length;
+        if ($free > 1048576 && $used > 0) { // >1 MB free space
+            $pct = round($free / ($used + $free) * 100);
+            if ($pct >= 10) { // only flag if ≥10% fragmented
+                $fragmented[$t->Name] = ['free' => $free, 'pct' => $pct];
+            }
+        }
+    }
+    if ($fragmented) {
+        arsort($fragmented);
+        $GLOBALS['out'][] = '';
+        $GLOBALS['out'][] = '  Fragmented tables (>1 MB wasted, ≥10% overhead):';
+        foreach (array_slice($fragmented, 0, 10, true) as $tname => $info) {
+            row('  ' . $tname, bytes($info['free']) . ' free (' . $info['pct'] . '% overhead)', 'WARN');
+        }
+        note('Run OPTIMIZE TABLE or use WP-CLI: wp db optimize');
+    } else {
+        good('No significant table fragmentation detected');
+    }
+}
+
+// ── DB: Missing indexes on core tables ──────────────────────
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Core table index checks:';
+$index_checks = [
+    $wpdb->posts    => ['post_author', 'post_status', 'post_type', 'post_parent', 'post_date'],
+    $wpdb->postmeta => ['post_id', 'meta_key'],
+    $wpdb->options  => ['autoload'],
+    $wpdb->comments => ['comment_post_ID', 'comment_approved_date_gmt', 'comment_author_email'],
+    $wpdb->usermeta => ['user_id', 'meta_key'],
+];
+$index_issues = 0;
+foreach ($index_checks as $table => $required_cols) {
+    $indexes = $wpdb->get_results("SHOW INDEX FROM `$table`");
+    if ($indexes === null) continue; // table may not exist
+    $indexed_cols = array_unique(array_column($indexes, 'Column_name'));
+    foreach ($required_cols as $col) {
+        if (!in_array($col, $indexed_cols)) {
+            warn("Missing index on `$table`.`$col`");
+            $index_issues++;
+        }
+    }
+}
+if ($index_issues === 0) {
+    good('All checked core table indexes present');
+}
+
+// ── DB: Orphaned postmeta ────────────────────────────────────
+$orphaned_postmeta = $wpdb->get_var("
+    SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+    LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+    WHERE p.ID IS NULL
+");
+row('Orphaned postmeta rows', $orphaned_postmeta,
+    (int)$orphaned_postmeta > 1000 ? 'WARN' : ((int)$orphaned_postmeta > 0 ? 'INFO' : 'OK'));
+if ((int)$orphaned_postmeta > 1000) {
+    note('Clean up with: DELETE pm FROM ' . $wpdb->postmeta . ' pm LEFT JOIN ' . $wpdb->posts . ' p ON p.ID = pm.post_id WHERE p.ID IS NULL');
+}
+
+// ── DB: Orphaned usermeta ─────────────────────────────────────
+$orphaned_usermeta = $wpdb->get_var("
+    SELECT COUNT(*) FROM {$wpdb->usermeta} um
+    LEFT JOIN {$wpdb->users} u ON u.ID = um.user_id
+    WHERE u.ID IS NULL
+");
+row('Orphaned usermeta rows', $orphaned_usermeta,
+    (int)$orphaned_usermeta > 500 ? 'WARN' : ((int)$orphaned_usermeta > 0 ? 'INFO' : 'OK'));
+
 // ─────────────────────────────────────────────────────────────
 // 3. OBJECT CACHE
 // ─────────────────────────────────────────────────────────────
@@ -589,14 +663,84 @@ $cron_jobs  = _get_cron_array();
 $total_jobs = 0;
 $overdue    = 0;
 $now        = time();
+$hook_counts     = []; // hook_name => count of scheduled instances
+$hook_schedules  = []; // hook_name => [schedule_name, ...]
+$fast_hooks      = []; // hook_name => interval_seconds (flagged if < 300s / 5min)
+
+// Known WP core cron hooks — not worth flagging individually
+$core_cron_hooks = [
+    'wp_scheduled_delete', 'wp_update_plugins', 'wp_update_themes',
+    'wp_update_user_counts', 'wp_delete_temp_updater_backups',
+    'wp_scheduled_auto_draft_delete', 'delete_expired_transients',
+    'recovery_mode_clean_expired_keys', 'wp_privacy_delete_old_export_files',
+    'wp_site_health_scheduled_check', 'wp_https_detection',
+    'wp_version_check', 'wp_maybe_auto_update',
+];
+
+// Get registered schedules to look up interval
+$schedules = wp_get_schedules();
+
 if (is_array($cron_jobs)) {
     foreach ($cron_jobs as $timestamp => $hooks) {
-        $total_jobs += array_sum(array_map('count', $hooks));
         if ($timestamp < $now) $overdue++;
+        foreach ($hooks as $hook_name => $events) {
+            $count = count($events);
+            $total_jobs += $count;
+            $hook_counts[$hook_name] = ($hook_counts[$hook_name] ?? 0) + $count;
+
+            // Capture schedule name and check for fast scheduling
+            foreach ($events as $event) {
+                $sched = $event['schedule'] ?? null;
+                if ($sched) {
+                    $hook_schedules[$hook_name][] = $sched;
+                    $interval = $schedules[$sched]['interval'] ?? ($event['interval'] ?? null);
+                    if ($interval && (int)$interval < 300) {
+                        // Flag if runs more often than every 5 minutes
+                        $fast_hooks[$hook_name] = (int)$interval;
+                    }
+                }
+            }
+        }
     }
 }
 row('Scheduled cron events', $total_jobs);
 row('Overdue timestamps',    $overdue, $overdue > 10 ? 'WARN' : 'OK');
+
+// Fast-scheduling hooks
+if ($fast_hooks) {
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Hooks scheduled more often than every 5 minutes:';
+    foreach ($fast_hooks as $hook => $interval) {
+        $every = $interval >= 60 ? round($interval / 60, 1) . ' min' : $interval . 's';
+        warn("  $hook (every $every)");
+    }
+}
+
+// Top hooks by scheduled instance count, excluding core
+arsort($hook_counts);
+$plugin_cron = array_filter(
+    $hook_counts,
+    fn($name) => !in_array($name, $core_cron_hooks),
+    ARRAY_FILTER_USE_KEY
+);
+
+if ($plugin_cron) {
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Cron hook breakdown (non-core, by instance count):';
+    $shown = 0;
+    foreach ($plugin_cron as $hook => $count) {
+        if ($shown++ >= 20) break;
+        // Resolve schedule label
+        $scheds = array_unique($hook_schedules[$hook] ?? []);
+        $sched_label = $scheds ? implode('/', $scheds) : 'once';
+        $flag = '';
+        if ($count > 10) $flag = ' [WARN: many instances]';
+        $GLOBALS['out'][] = sprintf("    %-50s %d × %s%s",
+            substr($hook, 0, 50), $count, $sched_label, $flag);
+    }
+} else {
+    good('No non-core cron hooks found');
+}
 
 // ─────────────────────────────────────────────────────────────
 // 7. ASSET & HTTP DELIVERY
@@ -893,10 +1037,326 @@ if ($upload_dir && is_dir($upload_dir)) {
     row('Upload year folders', count($years ?: []));
 }
 
+// ── Media library checks ─────────────────────────────────────
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Media library:';
+
+// Total media items
+$total_media = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'attachment'");
+row('  Total media items', $total_media, (int)$total_media > 10000 ? 'WARN' : 'OK');
+
+// Unattached media (post_parent = 0)
+$unattached_media = $wpdb->get_var("
+    SELECT COUNT(*) FROM {$wpdb->posts}
+    WHERE post_type = 'attachment'
+    AND post_status = 'inherit'
+    AND post_parent = 0
+");
+row('  Unattached media items', $unattached_media,
+    (int)$unattached_media > 1000 ? 'WARN' : ((int)$unattached_media > 100 ? 'INFO' : 'OK'));
+if ((int)$unattached_media > 100) {
+    note('Unattached media is not necessarily a problem, but large counts may indicate orphaned uploads');
+}
+
+// Large image files on disk (>2 MB) via find
+if ($upload_dir && is_dir($upload_dir)) {
+    $large_files_raw = shell_exec("find " . escapeshellarg($upload_dir) . " -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' -o -iname '*.webp' \\) -size +2M 2>/dev/null | wc -l");
+    $large_file_count = $large_files_raw ? (int)trim($large_files_raw) : null;
+    if ($large_file_count !== null) {
+        row('  Images >2 MB on disk', $large_file_count,
+            $large_file_count > 50 ? 'WARN' : ($large_file_count > 20 ? 'INFO' : 'OK'));
+        if ($large_file_count > 0) {
+            // Show up to 5 examples, largest first
+            $large_examples_raw = shell_exec("find " . escapeshellarg($upload_dir) . " -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' -o -iname '*.webp' \\) -size +2M -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -5");
+            if ($large_examples_raw) {
+                $GLOBALS['out'][] = '  Largest images on disk:';
+                foreach (explode("\n", trim($large_examples_raw)) as $line) {
+                    if (!$line) continue;
+                    [$size_bytes, $fpath] = explode("\t", $line, 2);
+                    $rel = ltrim(str_replace($upload_dir, '', $fpath), '/');
+                    row('    ' . substr($rel, 0, 55), bytes((int)$size_bytes));
+                }
+            }
+        }
+    } else {
+        row('  Images >2 MB on disk', 'unavailable (find/shell_exec disabled)', 'INFO');
+    }
+}
+
+// ── Error log checks ─────────────────────────────────────────
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Error logs:';
+
+// WP debug.log
+$debug_log = WP_CONTENT_DIR . '/debug.log';
+if (file_exists($debug_log)) {
+    $debug_size = filesize($debug_log);
+    row('  debug.log size', bytes($debug_size),
+        $debug_size > 5242880 ? 'WARN' : ($debug_size > 524288 ? 'INFO' : 'OK'));
+    if ($debug_size > 5242880) {
+        note('debug.log is large — rotate or clear it, and ensure WP_DEBUG_LOG is off in production');
+    }
+} else {
+    row('  debug.log', 'not found', 'INFO');
+    note('Absence is normal when WP_DEBUG_LOG is off');
+}
+
+// PHP error log
+$php_error_log = ini_get('error_log');
+if ($php_error_log && file_exists($php_error_log)) {
+    $php_log_size = filesize($php_error_log);
+    row('  PHP error_log size', bytes($php_log_size),
+        $php_log_size > 10485760 ? 'WARN' : ($php_log_size > 1048576 ? 'INFO' : 'OK'));
+} elseif ($php_error_log) {
+    row('  PHP error_log', 'configured but not found: ' . basename($php_error_log), 'INFO');
+} else {
+    row('  PHP error_log', 'not configured', 'INFO');
+    note('Absence is normal on managed hosting where logs are handled at server level');
+}
+
 // ─────────────────────────────────────────────────────────────
-// 11. OUTBOUND HTTP HEALTH
+// 11. WORDPRESS SITE HEALTH
 // ─────────────────────────────────────────────────────────────
-section('11. OUTBOUND HTTP');
+section('11. WORDPRESS SITE HEALTH');
+
+// ── Post & page counts ───────────────────────────────────────
+$post_types = get_post_types(['public' => true], 'objects');
+$GLOBALS['out'][] = '  Published content counts:';
+foreach ($post_types as $pt) {
+    $counts = wp_count_posts($pt->name);
+    $published = (int)($counts->publish ?? 0);
+    if ($published === 0) continue; // skip empty post types
+    $flag = ($published > 5000 && !in_array($pt->name, ['post', 'page', 'attachment']))
+        ? 'WARN' : 'OK';
+    row('  ' . $pt->label . ' (' . $pt->name . ')', number_format($published) . ' published', $flag);
+    // Show other statuses if notable
+    foreach (['draft', 'pending', 'future', 'trash'] as $status) {
+        $cnt = (int)($counts->$status ?? 0);
+        if ($cnt > 100) {
+            row('    → ' . $status, number_format($cnt), 'INFO');
+        }
+    }
+}
+
+// ── Users by role ────────────────────────────────────────────
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Users by role:';
+global $wp_roles;
+if (!isset($wp_roles)) {
+    $wp_roles = new WP_Roles();
+}
+$total_users = 0;
+foreach (array_keys($wp_roles->roles) as $role) {
+    $count = $wpdb->get_var($wpdb->prepare("
+        SELECT COUNT(*) FROM {$wpdb->users} u
+        INNER JOIN {$wpdb->usermeta} um ON u.ID = um.user_id
+        WHERE um.meta_key = %s
+        AND um.meta_value LIKE %s
+    ", $wpdb->prefix . 'capabilities', '%"' . $role . '"%'));
+    if ((int)$count === 0) continue;
+    $flag = ($role === 'subscriber' && (int)$count > 10000) ? 'WARN' : 'OK';
+    row('  ' . $role, number_format((int)$count), $flag);
+    $total_users += (int)$count;
+}
+row('  Total (approx)', number_format($total_users));
+if ($total_users > 10000) {
+    note('Large user bases can slow admin queries; ensure proper indexing');
+}
+
+// ── Active theme details ─────────────────────────────────────
+$GLOBALS['out'][] = '';
+$theme = wp_get_theme();
+$parent = $theme->parent();
+$GLOBALS['out'][] = '  Active theme:';
+row('  Theme name',    $theme->get('Name'));
+row('  Theme version', $theme->get('Version'));
+row('  Is child theme', $parent ? 'Yes (parent: ' . $parent->get('Name') . ')' : 'No');
+if ($parent) {
+    row('  Parent theme version', $parent->get('Version'));
+}
+
+// Flag known resource-heavy themes
+$heavy_themes = ['Divi', 'Avada', 'BeTheme', 'Enfold', 'X', 'Jupiter', 'Bridge', 'TheGem'];
+$theme_name = $theme->get('Name');
+$parent_name = $parent ? $parent->get('Name') : '';
+foreach ($heavy_themes as $ht) {
+    if (stripos($theme_name, $ht) !== false || stripos($parent_name, $ht) !== false) {
+        warn("  '$ht' is a known resource-heavy theme — ensure adequate caching");
+        break;
+    }
+}
+
+// Count template/PHP files in theme
+$theme_dir = $theme->get_stylesheet_directory();
+$theme_php_files = glob($theme_dir . '/*.php');
+$theme_file_count = $theme_php_files ? count($theme_php_files) : 0;
+row('  Theme PHP files (root)', $theme_file_count);
+
+// ── Orphaned term relationships ──────────────────────────────
+$GLOBALS['out'][] = '';
+$orphaned_terms = $wpdb->get_var("
+    SELECT COUNT(*) FROM {$wpdb->term_relationships} tr
+    LEFT JOIN {$wpdb->posts} p ON p.ID = tr.object_id
+    WHERE p.ID IS NULL
+");
+row('Orphaned term relationships', $orphaned_terms,
+    (int)$orphaned_terms > 500 ? 'WARN' : ((int)$orphaned_terms > 0 ? 'INFO' : 'OK'));
+
+// ── xdebug detection ─────────────────────────────────────────
+$xdebug_loaded = in_array('xdebug', get_loaded_extensions());
+row('Xdebug loaded', $xdebug_loaded ? 'YES' : 'No',
+    $xdebug_loaded ? 'WARN' : 'OK');
+if ($xdebug_loaded) {
+    warn('Xdebug is active — significant performance overhead. Disable in production.');
+}
+
+// ── Multisite-specific ───────────────────────────────────────
+if (is_multisite()) {
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Multisite:';
+    $site_count = get_sites(['count' => true]);
+    row('  Network sites', $site_count, (int)$site_count > 100 ? 'INFO' : 'OK');
+    $blog_table = $wpdb->blogs;
+    $archived   = $wpdb->get_var("SELECT COUNT(*) FROM $blog_table WHERE archived = '1'");
+    $deleted    = $wpdb->get_var("SELECT COUNT(*) FROM $blog_table WHERE deleted = '1'");
+    row('  Archived sites', $archived);
+    row('  Deleted sites',  $deleted);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 12. WOOCOMMERCE (only if WooCommerce is active)
+// ─────────────────────────────────────────────────────────────
+if (class_exists('WooCommerce')) {
+    section('12. WOOCOMMERCE');
+
+    // WC version
+    row('WooCommerce version', defined('WC_VERSION') ? WC_VERSION : (class_exists('WooCommerce') ? WC()->version : 'unknown'));
+
+    // ── HPOS (High-Performance Order Storage) ───────────────
+    $hpos_enabled = get_option('woocommerce_feature_hpos_enabled') === 'yes'
+        || (function_exists('wc_get_container') && class_exists('\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController'));
+    // More reliable: check the feature flag option
+    $hpos_option = get_option('woocommerce_custom_orders_table_enabled', 'no');
+    row('HPOS (Custom Orders Table)', $hpos_option === 'yes' ? 'Enabled' : 'Disabled (legacy post table)',
+        $hpos_option === 'yes' ? 'OK' : 'INFO');
+
+    // ── Product counts ───────────────────────────────────────
+    $product_counts = wp_count_posts('product');
+    $published_products = (int)($product_counts->publish ?? 0);
+    row('Published products', number_format($published_products),
+        $published_products > 10000 ? 'WARN' : 'OK');
+    if ($published_products > 10000) {
+        note('Large product catalogs may benefit from dedicated query optimisation and object caching');
+    }
+
+    // ── Order counts by status ───────────────────────────────
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = '  Order counts by status:';
+    if ($hpos_option === 'yes') {
+        // HPOS: orders are in wc_orders table
+        $orders_table = $wpdb->prefix . 'wc_orders';
+        $order_statuses = $wpdb->get_results("
+            SELECT status, COUNT(*) AS cnt
+            FROM `$orders_table`
+            WHERE type = 'shop_order'
+            GROUP BY status
+            ORDER BY cnt DESC
+        ");
+        if ($order_statuses) {
+            foreach ($order_statuses as $s) {
+                row('  ' . $s->status, number_format((int)$s->cnt),
+                    in_array($s->status, ['wc-on-hold', 'wc-pending']) && (int)$s->cnt > 100 ? 'WARN' : 'OK');
+            }
+        }
+    } else {
+        // Legacy: orders in wp_posts
+        $wc_statuses = ['wc-pending', 'wc-processing', 'wc-on-hold', 'wc-completed', 'wc-cancelled', 'wc-refunded', 'wc-failed'];
+        foreach ($wc_statuses as $status) {
+            $cnt = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status = %s",
+                $status
+            ));
+            if ((int)$cnt === 0) continue;
+            $flag = in_array($status, ['wc-on-hold', 'wc-pending']) && (int)$cnt > 100 ? 'WARN' : 'OK';
+            row('  ' . $status, number_format((int)$cnt), $flag);
+        }
+    }
+
+    // ── Sessions table ───────────────────────────────────────
+    $GLOBALS['out'][] = '';
+    $sessions_table = $wpdb->prefix . 'woocommerce_sessions';
+    $sessions_exists = $wpdb->get_var("SHOW TABLES LIKE '$sessions_table'") === $sessions_table;
+    if ($sessions_exists) {
+        $sess_count = $wpdb->get_var("SELECT COUNT(*) FROM `$sessions_table`");
+        $sess_table_info = $wpdb->get_row("SHOW TABLE STATUS LIKE '$sessions_table'");
+        $sess_size = $sess_table_info ? (int)$sess_table_info->Data_length + (int)$sess_table_info->Index_length : 0;
+        row('WC sessions (total)', number_format((int)$sess_count),
+            (int)$sess_count > 10000 ? 'WARN' : 'OK');
+        row('WC sessions table size', bytes($sess_size));
+
+        // Abandoned sessions (session_expiry in the past = expired, or > 24h old)
+        $abandoned = $wpdb->get_var("
+            SELECT COUNT(*) FROM `$sessions_table`
+            WHERE session_expiry < UNIX_TIMESTAMP()
+        ");
+        row('WC expired sessions', number_format((int)$abandoned),
+            (int)$abandoned > 1000 ? 'WARN' : ((int)$abandoned > 0 ? 'INFO' : 'OK'));
+        if ((int)$abandoned > 1000) {
+            note('Expired sessions bloat the DB — run: wp wc session delete --all or use WooCommerce built-in cleanup');
+        }
+    } else {
+        row('WC sessions table', 'not found', 'INFO');
+    }
+
+    // ── Active payment gateways ──────────────────────────────
+    $GLOBALS['out'][] = '';
+    $gateways_raw = get_option('woocommerce_gateway_order', []);
+    // Get enabled gateways more reliably from individual gateway options
+    $enabled_gateways = [];
+    if (function_exists('WC')) {
+        $available_gateways = WC()->payment_gateways ? WC()->payment_gateways->get_available_payment_gateways() : [];
+        foreach ($available_gateways as $gw_id => $gw) {
+            $enabled_gateways[] = $gw->get_title() . ' (' . $gw_id . ')';
+        }
+    }
+    if ($enabled_gateways) {
+        row('Active payment gateways', count($enabled_gateways));
+        foreach ($enabled_gateways as $gw) {
+            $GLOBALS['out'][] = '    ' . $gw;
+        }
+    } else {
+        row('Active payment gateways', 'none detected', 'WARN');
+    }
+
+    // ── WooCommerce cron jobs ────────────────────────────────
+    $GLOBALS['out'][] = '';
+    $wc_cron_jobs = [];
+    $overdue_wc_cron = 0;
+    if (is_array($cron_jobs)) {
+        foreach ($cron_jobs as $timestamp => $hooks) {
+            foreach ($hooks as $hook_name => $events) {
+                if (str_starts_with($hook_name, 'woocommerce_') || str_starts_with($hook_name, 'wc_')) {
+                    $wc_cron_jobs[$hook_name] = ($wc_cron_jobs[$hook_name] ?? 0) + count($events);
+                    if ($timestamp < $now) $overdue_wc_cron++;
+                }
+            }
+        }
+    }
+    row('WC cron hook types', count($wc_cron_jobs));
+    row('WC overdue cron events', $overdue_wc_cron, $overdue_wc_cron > 5 ? 'WARN' : 'OK');
+    if ($wc_cron_jobs) {
+        arsort($wc_cron_jobs);
+        $GLOBALS['out'][] = '  WooCommerce cron hooks:';
+        foreach (array_slice($wc_cron_jobs, 0, 15, true) as $hook => $count) {
+            $GLOBALS['out'][] = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 13. OUTBOUND HTTP HEALTH
+// ─────────────────────────────────────────────────────────────
+section('13. OUTBOUND HTTP');
 
 // Check common endpoints WP uses
 $endpoints = [
@@ -923,9 +1383,9 @@ row('Loopback (admin-ajax)', $lb_ok ? 'OK' : (is_wp_error($loopback) ? $loopback
     $lb_ok ? 'OK' : 'WARN');
 
 // ─────────────────────────────────────────────────────────────
-// 12. RESOURCE USAGE (this script execution)
+// 14. RESOURCE USAGE (this script execution)
 // ─────────────────────────────────────────────────────────────
-section('12. RESOURCE USAGE (this script)');
+section('14. RESOURCE USAGE (this script)');
 
 $elapsed_total = microtime(true) - WP_PERF_DIAG_START;
 row('Script execution time', ms($elapsed_total));
@@ -978,11 +1438,44 @@ if ($opcache_worthwhile) {
 if ($enqueued_scripts > 20)      $issues[] = "High enqueued script count ($enqueued_scripts) — check for bloat";
 if ($enqueued_styles > 15)       $issues[] = "High enqueued style count ($enqueued_styles) — check for bloat";
 
+// DB enhancements
+if (isset($orphaned_postmeta) && (int)$orphaned_postmeta > 1000)
+    $issues[] = "Large orphaned postmeta count ({$orphaned_postmeta} rows) — safe to clean up";
+if (isset($orphaned_usermeta) && (int)$orphaned_usermeta > 500)
+    $issues[] = "Orphaned usermeta rows ({$orphaned_usermeta}) — may indicate plugin cleanup issues";
+if (isset($orphaned_terms) && (int)$orphaned_terms > 500)
+    $issues[] = "Orphaned term relationships ({$orphaned_terms}) — run wp term recount";
+if (isset($fragmented) && count($fragmented) > 0)
+    $issues[] = count($fragmented) . ' fragmented table(s) detected — consider OPTIMIZE TABLE';
+if (isset($index_issues) && $index_issues > 0)
+    $issues[] = "$index_issues missing core table index(es) detected";
+
+// Cron
+if (isset($fast_hooks) && count($fast_hooks) > 0)
+    $issues[] = count($fast_hooks) . ' cron hook(s) running more often than every 5 min';
+
+// Media
+if (isset($large_file_count) && $large_file_count > 50)
+    $issues[] = "$large_file_count images >2 MB found — consider optimising or off-loading media";
+
+// Error logs
+if (isset($debug_size) && $debug_size > 5242880)
+    $issues[] = 'debug.log is very large (' . bytes($debug_size) . ') — investigate and rotate';
+if (isset($php_log_size) && $php_log_size > 10485760)
+    $issues[] = 'PHP error_log is very large (' . bytes($php_log_size) . ') — investigate and rotate';
+
+// WordPress-specific
+if ($xdebug_loaded)
+    $issues[] = 'Xdebug is loaded — disable in production';
+
 if ($using_external_cache)       $wins[] = 'External object cache is active';
 if ($is_batcache)                $wins[] = 'Batcache page caching is present';
 if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for this request';
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
+if (!$xdebug_loaded)             $wins[] = 'Xdebug not loaded';
+if (isset($orphaned_postmeta) && (int)$orphaned_postmeta === 0) $wins[] = 'No orphaned postmeta';
+if (isset($fast_hooks) && count($fast_hooks) === 0) $wins[] = 'No unusually fast cron scheduling';
 
 $GLOBALS['out'][] = '';
 if ($wins) {
