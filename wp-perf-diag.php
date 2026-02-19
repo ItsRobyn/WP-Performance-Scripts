@@ -128,8 +128,8 @@ row('PHP memory_limit',   ini_get('memory_limit'));
 row('PHP max_execution_time', ini_get('max_execution_time') . 's');
 row('PHP upload_max_filesize', ini_get('upload_max_filesize'));
 row('PHP post_max_size',  ini_get('post_max_size'));
-row('OPcache enabled',    function_exists('opcache_get_status') && @opcache_get_status() !== false ? 'Yes' : 'No',
-    function_exists('opcache_get_status') && @opcache_get_status() !== false ? 'OK' : 'WARN');
+$opcache_enabled = function_exists('opcache_get_status') && @opcache_get_status() !== false;
+row('OPcache enabled', $opcache_enabled ? 'Yes' : 'No', $opcache_enabled ? 'OK' : 'INFO');
 
 if (function_exists('opcache_get_status')) {
     $op = @opcache_get_status(false);
@@ -949,14 +949,32 @@ if ((int)$revision_count > 500)  $issues[] = "High revision count ({$revision_co
 if ((int)$spam_comments > 500)   $issues[] = "High spam comment count — empty spam from Dashboard > Comments";
 if (!(defined('DISABLE_WP_CRON') && DISABLE_WP_CRON)) $issues[] = 'WP-Cron runs on HTTP requests — consider DISABLE_WP_CRON with server cron';
 if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
-if (!function_exists('opcache_get_status') || @opcache_get_status() === false) $issues[] = 'OPcache is not enabled';
+// OPcache: only recommend requesting it from Platform Team if the site
+// has enough PHP complexity to make a meaningful difference — i.e. a page
+// builder, high plugin count, or high asset count. Low-complexity sites
+// wouldn't justify the request.
+$has_builder = !empty(array_filter($found_perf_plugins, fn($p) => $p[1] === 'builder'));
+$opcache_worthwhile = !$opcache_enabled && (
+    count($active_plugins) > 20 ||
+    $has_builder ||
+    $enqueued_scripts > 20 ||
+    $enqueued_styles > 15
+);
+if ($opcache_worthwhile) {
+    $reasons = [];
+    if (count($active_plugins) > 20) $reasons[] = count($active_plugins) . ' active plugins';
+    if ($has_builder)                 $reasons[] = 'page builder active';
+    if ($enqueued_scripts > 20)       $reasons[] = $enqueued_scripts . ' enqueued scripts';
+    if ($enqueued_styles > 15)        $reasons[] = $enqueued_styles . ' enqueued styles';
+    $issues[] = 'OPcache not enabled — worth requesting from Platform Team (' . implode(', ', $reasons) . ')';
+}
 if ($enqueued_scripts > 20)      $issues[] = "High enqueued script count ($enqueued_scripts) — check for bloat";
 if ($enqueued_styles > 15)       $issues[] = "High enqueued style count ($enqueued_styles) — check for bloat";
 
 if ($using_external_cache)       $wins[] = 'External object cache is active';
 if ($is_batcache)                $wins[] = 'Batcache page caching is present';
 if ($savequeries_on && $wpdb->num_queries < 50) $wins[] = 'Low query count for this request';
-if (function_exists('opcache_get_status') && @opcache_get_status() !== false) $wins[] = 'OPcache is enabled';
+if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
 
 $GLOBALS['out'][] = '';
