@@ -725,33 +725,53 @@ foreach ($wp_config_checks as $const => $info) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 10. FILE SYSTEM & DISK
+// 10. FILESYSTEM
 // ─────────────────────────────────────────────────────────────
 section('10. FILESYSTEM');
 
-$paths = [
-    'ABSPATH'         => ABSPATH,
-    'WP_CONTENT_DIR'  => WP_CONTENT_DIR,
-    'Uploads dir'     => wp_upload_dir()['basedir'] ?? 'unknown',
-];
+$wp_content = WP_CONTENT_DIR;
+$upload_dir = wp_upload_dir()['basedir'] ?? null;
 
-foreach ($paths as $label => $path) {
-    $writable = is_writable($path);
-    $size = function_exists('disk_total_space') ? disk_total_space($path) : null;
-    $free = function_exists('disk_free_space')  ? disk_free_space($path)  : null;
-    row($label, $path);
-    row("  Writable", $writable ? 'Yes' : 'No');
-    if ($free && $size) {
-        $pct_used = round((($size - $free) / $size) * 100);
-        row("  Disk free", bytes((int)$free) . ' / ' . bytes((int)$size) . " ($pct_used% used)",
-            $pct_used > 90 ? 'BAD' : ($pct_used > 75 ? 'WARN' : 'OK'));
-    }
+// wp-content total size
+$site_size_raw = shell_exec("du -sh " . escapeshellarg($wp_content) . " 2>/dev/null");
+$site_size = $site_size_raw ? trim(explode("\t", $site_size_raw)[0]) : 'unavailable';
+row('wp-content total size', $site_size);
+
+// uploads total size
+if ($upload_dir && is_dir($upload_dir)) {
+    $uploads_size_raw = shell_exec("du -sh " . escapeshellarg($upload_dir) . " 2>/dev/null");
+    $uploads_size = $uploads_size_raw ? trim(explode("\t", $uploads_size_raw)[0]) : 'unavailable';
+    row('uploads total size', $uploads_size);
 }
 
-// WP uploads folder size estimate (top level only for speed)
-$upload_base = wp_upload_dir()['basedir'] ?? null;
-if ($upload_base && is_dir($upload_base)) {
-    $years = glob($upload_base . '/[0-9][0-9][0-9][0-9]', GLOB_ONLYDIR);
+// Top 10 directories within wp-content by size
+$GLOBALS['out'][] = '';
+$GLOBALS['out'][] = '  Top 10 directories in wp-content by size:';
+$dir_sizes_raw = shell_exec("du -hsx " . escapeshellarg($wp_content) . "/* 2>/dev/null | sort -rh | head -n 10");
+if ($dir_sizes_raw) {
+    foreach (explode("\n", trim($dir_sizes_raw)) as $line) {
+        if (!$line) continue;
+        [$size, $path] = explode("\t", $line, 2);
+        row('  ' . basename($path), trim($size));
+    }
+} else {
+    $GLOBALS['out'][] = '  (unavailable — shell_exec may be disabled)';
+}
+
+// Writability checks
+$GLOBALS['out'][] = '';
+$write_paths = [
+    'ABSPATH'        => ABSPATH,
+    'WP_CONTENT_DIR' => WP_CONTENT_DIR,
+    'Uploads dir'    => $upload_dir ?? 'unknown',
+];
+foreach ($write_paths as $label => $path) {
+    row($label . ' writable', is_writable($path) ? 'Yes' : 'No');
+}
+
+// Upload year folders (rough indicator of media library age/volume)
+if ($upload_dir && is_dir($upload_dir)) {
+    $years = glob($upload_dir . '/[0-9][0-9][0-9][0-9]', GLOB_ONLYDIR);
     row('Upload year folders', count($years ?: []));
 }
 
