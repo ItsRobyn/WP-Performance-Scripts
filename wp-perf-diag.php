@@ -303,12 +303,32 @@ if (is_multisite()) {
     $network_plugins = array_keys(get_site_option('active_sitewide_plugins', []));
     $active_plugins  = array_merge($active_plugins, $network_plugins);
 }
-row('Active plugin count', count($active_plugins), count($active_plugins) > 30 ? 'WARN' : 'OK');
 
 if (!function_exists('get_plugins')) {
     require_once ABSPATH . 'wp-admin/includes/plugin.php';
 }
 $all_plugins = get_plugins();
+
+// Plugin update counts
+$update_transient = get_site_transient('update_plugins');
+$plugins_needing_update = isset($update_transient->response) ? count($update_transient->response) : 0;
+
+row('Total plugins (installed)', count($all_plugins));
+row('Active plugins',            count($active_plugins), count($active_plugins) > 30 ? 'WARN' : 'OK');
+row('Inactive plugins',          count($all_plugins) - count($active_plugins));
+row('Plugins needing updates',   $plugins_needing_update, $plugins_needing_update > 0 ? 'WARN' : 'OK');
+
+// List plugins with available updates
+if ($plugins_needing_update > 0 && isset($update_transient->response)) {
+    $out[] = '  Plugins with available updates:';
+    foreach ($update_transient->response as $slug => $data) {
+        $current = $all_plugins[$slug]['Version'] ?? '?';
+        $new_ver = $data->new_version ?? '?';
+        $name    = $all_plugins[$slug]['Name'] ?? $slug;
+        $out[] = sprintf("    %-45s %s → %s", substr($name, 0, 45), $current, $new_ver);
+    }
+    $out[] = '';
+}
 
 // Flag known performance-impactful plugins
 $perf_plugins = [
