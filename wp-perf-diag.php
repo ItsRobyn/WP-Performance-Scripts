@@ -115,19 +115,45 @@ function ms(float $seconds): string {
 // ─────────────────────────────────────────────────────────────
 section('1. ENVIRONMENT');
 
-row('PHP Version',        PHP_VERSION,           version_compare(PHP_VERSION, '8.0', '>=') ? 'OK' : 'WARN');
-// WordPress version — compare against latest from api.wordpress.org
+// Fetch version data from api.wordpress.org once — used for both WP and PHP version checks.
+// Response includes: offers[0].version (latest WP), recommended_php, minimum_php.
 $wp_current_ver = get_bloginfo('version');
 $wp_ver_response = wp_remote_get('https://api.wordpress.org/core/version-check/1.7/', [
     'timeout'   => 5,
     'sslverify' => false,
     'headers'   => ['Accept' => 'application/json'],
 ]);
-$wp_latest_ver = null;
+$wp_latest_ver    = null;
+$php_recommended  = null;
+$php_minimum      = null;
 if (!is_wp_error($wp_ver_response)) {
-    $wp_ver_body = json_decode(wp_remote_retrieve_body($wp_ver_response), true);
+    $wp_ver_body   = json_decode(wp_remote_retrieve_body($wp_ver_response), true);
     $wp_latest_ver = $wp_ver_body['offers'][0]['version'] ?? null;
+    $php_recommended = $wp_ver_body['recommended_php'] ?? null;
+    $php_minimum     = $wp_ver_body['minimum_php']     ?? null;
 }
+
+// PHP Version — flag against WordPress's recommended and minimum PHP versions
+if ($php_recommended) {
+    $php_below_recommended = version_compare(PHP_VERSION, $php_recommended, '<');
+    $php_below_minimum     = $php_minimum && version_compare(PHP_VERSION, $php_minimum, '<');
+    if ($php_below_minimum) {
+        $php_status = 'BAD';
+        $php_note   = " (below WP minimum: $php_minimum)";
+    } elseif ($php_below_recommended) {
+        $php_status = 'WARN';
+        $php_note   = " (recommended: $php_recommended)";
+    } else {
+        $php_status = 'OK';
+        $php_note   = " (meets recommended $php_recommended)";
+    }
+    row('PHP Version', PHP_VERSION . $php_note, $php_status);
+} else {
+    // Fallback if API unavailable: flag anything below 8.1 (security-only as of late 2024)
+    row('PHP Version', PHP_VERSION, version_compare(PHP_VERSION, '8.1', '>=') ? 'OK' : 'WARN');
+}
+
+// WordPress version
 if ($wp_latest_ver) {
     $wp_outdated = version_compare($wp_current_ver, $wp_latest_ver, '<');
     row('WordPress Version',
@@ -1443,6 +1469,10 @@ if ((int)$revision_count > 500)  $issues[] = "High revision count ({$revision_co
 if ((int)$spam_comments > 500)   $issues[] = "High spam comment count — empty spam from Dashboard > Comments";
 if (!(defined('DISABLE_WP_CRON') && DISABLE_WP_CRON)) $issues[] = 'WP-Cron runs on HTTP requests — consider DISABLE_WP_CRON with server cron';
 if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
+if (isset($php_minimum) && $php_minimum && version_compare(PHP_VERSION, $php_minimum, '<'))
+    $issues[] = 'PHP ' . PHP_VERSION . " is below WordPress minimum ($php_minimum) — upgrade urgently";
+elseif (isset($php_recommended) && $php_recommended && version_compare(PHP_VERSION, $php_recommended, '<'))
+    $issues[] = 'PHP ' . PHP_VERSION . " is below WordPress recommended version ($php_recommended)";
 if (isset($wp_latest_ver) && $wp_latest_ver && version_compare($wp_current_ver, $wp_latest_ver, '<'))
     $issues[] = "WordPress is outdated ($wp_current_ver → $wp_latest_ver)";
 if (isset($theme_new_ver) && $theme_new_ver)
