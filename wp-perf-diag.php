@@ -966,7 +966,7 @@ if ($opcache_worthwhile) {
     if ($has_builder)                 $reasons[] = 'page builder active';
     if ($enqueued_scripts > 20)       $reasons[] = $enqueued_scripts . ' enqueued scripts';
     if ($enqueued_styles > 15)        $reasons[] = $enqueued_styles . ' enqueued styles';
-    $issues[] = 'OPcache not enabled — worth requesting from Platform Team (' . implode(', ', $reasons) . ')';
+    $issues[] = 'OPcache not enabled — consider requesting from Platform Team (' . implode(', ', $reasons) . ')';
 }
 if ($enqueued_scripts > 20)      $issues[] = "High enqueued script count ($enqueued_scripts) — check for bloat";
 if ($enqueued_styles > 15)       $issues[] = "High enqueued style count ($enqueued_styles) — check for bloat";
