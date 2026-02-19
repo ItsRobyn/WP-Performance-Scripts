@@ -14,7 +14,12 @@
 // ── Bootstrap ────────────────────────────────────────────────
 define('WP_PERF_DIAG_START', microtime(true));
 
-$is_cli = (php_sapi_name() === 'cli' || defined('WP_CLI'));
+// WP_CLI may not be defined yet when using `wp eval-file`; check SAPI first
+$is_cli = (php_sapi_name() === 'cli');
+// Also check WP_CLI in case it gets defined after bootstrap
+if (!$is_cli && defined('WP_CLI') && WP_CLI) {
+    $is_cli = true;
+}
 
 if (!$is_cli) {
     // Basic security: only allow if accessed with a secret param
@@ -164,28 +169,24 @@ row('MySQL/MariaDB Version', $db_ver ?? 'unknown');
 row('Table Prefix', $wpdb->prefix);
 
 // Check for slow query log
-$slow_log = $wpdb->get_var("SHOW VARIABLES LIKE 'slow_query_log'");
-$slow_qs  = $wpdb->get_row("SHOW VARIABLES LIKE 'long_query_time'");
-row('Slow Query Log', $wpdb->get_var("SHOW VARIABLES LIKE 'slow_query_log'") ?: 'unknown');
-row('Long Query Time', $slow_qs->Value ?? 'unknown');
+$slow_log_row = $wpdb->get_row("SHOW VARIABLES LIKE 'slow_query_log'");
+$slow_qs_row  = $wpdb->get_row("SHOW VARIABLES LIKE 'long_query_time'");
+row('Slow Query Log',  $slow_log_row->Value ?? 'unknown');
+row('Long Query Time', $slow_qs_row->Value  ?? 'unknown');
 
-// DB table sizes
-$tables = $wpdb->get_results("
-    SELECT table_name, 
-           ROUND((data_length + index_length), 0) AS size,
-           table_rows
-    FROM information_schema.TABLES
-    WHERE table_schema = '" . DB_NAME . "'
-    ORDER BY (data_length + index_length) DESC
-    LIMIT 15
-");
-
+// DB table sizes — use SHOW TABLE STATUS (works on managed hosts; information_schema often restricted)
+$tables = $wpdb->get_results("SHOW TABLE STATUS");
 if ($tables) {
+    usort($tables, fn($a, $b) => (($b->Data_length + $b->Index_length) <=> ($a->Data_length + $a->Index_length)));
     $out[] = '';
     $out[] = '  Top tables by size:';
-    foreach ($tables as $t) {
-        row('  ' . $t->table_name, bytes((int)$t->size) . ' (~' . number_format($t->table_rows) . ' rows)');
+    foreach (array_slice($tables, 0, 15) as $t) {
+        $size = (int)$t->Data_length + (int)$t->Index_length;
+        $rows = number_format((int)$t->Rows);
+        row('  ' . $t->Name, bytes($size) . " (~{$rows} rows)");
     }
+} else {
+    $out[] = '  Top tables by size: (unavailable — insufficient permissions)';
 }
 
 // Check autoload options size
@@ -332,11 +333,40 @@ $perf_plugins = [
     'really-simple-ssl/rlrsssl-really-simple-ssl.php' => ['Really Simple SSL', 'ssl'],
     'wordfence/wordfence.php'                     => ['Wordfence', 'security'],
     'all-in-one-wp-security-and-firewall/wp-security.php' => ['AIO Security', 'security'],
+    // SEO
+    'wordpress-seo/wp-seo.php'                   => ['Yoast SEO', 'seo'],
+    'seo-by-rank-math/rank-math.php'              => ['Rank Math SEO', 'seo'],
+    'google-site-kit/google-site-kit.php'         => ['Site Kit by Google', 'analytics'],
+    // Page builders / addons
+    'ultimate-elementor/ultimate-elementor.php'   => ['Ultimate Addons for Elementor', 'builder'],
+    'essential-addons-for-elementor-lite/essential_adons_for_elementor.php' => ['Essential Addons for Elementor', 'builder'],
+    'beaver-builder-lite-version/fl-builder.php'  => ['Beaver Builder', 'builder'],
+    'divi-builder/divi-builder.php'               => ['Divi Builder', 'builder'],
+    // Forms
+    'contact-form-7/wp-contact-form-7.php'        => ['Contact Form 7', 'forms'],
+    'ninja-forms/ninja-forms.php'                 => ['Ninja Forms', 'forms'],
+    // WooCommerce
+    'woocommerce/woocommerce.php'                 => ['WooCommerce', 'ecommerce'],
+    // Other heavy hitters
+    'the-events-calendar/the-events-calendar.php' => ['The Events Calendar', 'heavy'],
+    'bbpress/bbpress.php'                         => ['bbPress', 'heavy'],
+    'buddypress/bp-loader.php'                    => ['BuddyPress', 'heavy'],
 ];
 
 $found_perf_plugins = [];
 foreach ($perf_plugins as $slug => $info) {
-    if (in_array($slug, $active_plugins)) {
+    // Match on exact slug OR by directory prefix (handles version suffixes in filenames)
+    $dir = dirname($slug);
+    $matched = in_array($slug, $active_plugins);
+    if (!$matched) {
+        foreach ($active_plugins as $ap) {
+            if (dirname($ap) === $dir) {
+                $matched = true;
+                break;
+            }
+        }
+    }
+    if ($matched) {
         $found_perf_plugins[] = $info;
     }
 }
@@ -789,7 +819,15 @@ $out[] = '';
 
 // ── Output ────────────────────────────────────────────────────
 if (!$is_cli) {
-    header('Content-Type: text/plain; charset=utf-8');
+    // Only send header if output hasn't started yet
+    if (!headers_sent()) {
+        header('Content-Type: text/plain; charset=utf-8');
+    }
+}
+
+// Flush any buffered output that may be suppressing our content
+while (ob_get_level() > 0) {
+    ob_end_clean();
 }
 
 echo implode("\n", $out) . "\n";
