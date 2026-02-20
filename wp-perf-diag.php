@@ -76,7 +76,7 @@ function row(string $label, $value, string $status = ''): void {
     if ($is_cli) {
         // Label: soft grey (#8892a0), value: default white, badge: status colour
         $styledLabel = "\033[38;2;136;146;160m$label\033[0m";
-        $badge = $status ? "\033[{$color}m$badge\033[0m" : '';
+        $badge = $status ? "\033[1;{$color}m$badge\033[0m" : '';
         $line = sprintf("  %-58s %s %s", $styledLabel, $value, $badge);
     } else {
         $line = sprintf("  %-35s %s %s", $label, $value, $badge);
@@ -1567,7 +1567,6 @@ if (isset($php_log_size) && $php_log_size > 10485760)
 // ── Positives ────────────────────────────────────────────────
 
 // Caching
-if ($using_external_cache)       $wins[] = 'External object cache is active';
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
 if ($batcache_hit)               $wins[] = 'Batcache is working — confirmed HIT on warm request (x-nananana)';
 if ($edge_hit)                   $wins[] = 'Edge cache is working — confirmed HIT (x-ac)';
@@ -1645,4 +1644,16 @@ while (ob_get_level() > 0) {
     ob_end_clean();
 }
 
-echo implode("\n", $GLOBALS['out']) . "\n";
+$full_output = implode("\n", $GLOBALS['out']) . "\n";
+echo $full_output;
+
+// ── Save plain-text report ────────────────────────────────────
+// Strip ANSI escape codes so the saved file is clean plain text.
+$plain_output = preg_replace('/\033\[[0-9;]*m/', '', $full_output);
+$report_filename = 'wp-perf-diag-' . date('Y-m-d-His') . '-' . parse_url(get_site_url(), PHP_URL_HOST) . '.txt';
+$report_path = getcwd() . '/' . $report_filename;
+if (file_put_contents($report_path, $plain_output) !== false) {
+    echo "\n  Report saved: $report_filename\n";
+} else {
+    echo "\n  Could not write report to: $report_path\n";
+}
