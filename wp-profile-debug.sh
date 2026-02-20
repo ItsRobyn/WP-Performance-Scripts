@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# =============================================================
+# wp-profile-debug.sh — WP-CLI Profile Command Installer & Runner
+# =============================================================
+# Installs Composer and wp-cli/profile-command if not already
+# present, then runs a full profile breakdown for the current
+# WordPress site.
+#
+# Usage (run from the site's htdocs/public_html directory):
+#   bash wp-profile-debug.sh
+#
+# Or download and run in one step:
+#   wget -q -O wp-profile-debug.sh "https://raw.githubusercontent.com/ItsRobyn/WP-Performance-Scripts/main/wp-profile-debug.sh?$(date +%s)" && bash wp-profile-debug.sh
+#
+# Requirements: php, wp (WP-CLI), internet access
+# Safe: installs only to ~/.config — no system-wide changes.
+# =============================================================
+
+set -euo pipefail
+
+# ── Colours ───────────────────────────────────────────────────
+RED='\033[0;31m'; YLW='\033[0;33m'; GRN='\033[0;32m'
+PRI='\033[1;38;2;182;29;111m'   # #b61d6f — primary (bars)
+SEC='\033[1;38;2;59;73;86m'     # #3b4956 — secondary (titles)
+BLD='\033[1m';    RST='\033[0m'
+BAR="$(printf '─%.0s' {1..64})"
+
+# ── Helpers ───────────────────────────────────────────────────
+section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}"; }
+good()    { echo -e "  ${GRN}✓ $1${RST}"; }
+warn()    { echo -e "  ${YLW}⚠ $1${RST}"; }
+bad()     { echo -e "  ${RED}✗ $1${RST}"; }
+note()    { echo -e "  ${SEC}↳ $1${RST}"; }
+row()     { printf "  ${BLD}%-38s${RST} %s\n" "$1" "$2"; }
+
+step() {
+    echo -e "\n  ${BLD}${SEC}▶ $1${RST}"
+}
+
+die() {
+    bad "$1"
+    exit 1
+}
+
+# ── Header ────────────────────────────────────────────────────
+echo -e "\n${PRI}"
+echo "  ┌──────────────────────────────────────────────────────────┐"
+echo "  │           WP-CLI Profile Installer & Runner              │"
+echo "  │                 wp-profile-debug.sh                      │"
+echo "  └──────────────────────────────────────────────────────────┘${RST}"
+echo ""
+row "Run at"  "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+row "CWD"     "$(pwd)"
+
+# ── Preflight checks ──────────────────────────────────────────
+section "1. PREFLIGHT CHECKS"
+
+# PHP
+if ! command -v php &>/dev/null; then
+    die "php not found — cannot continue"
+fi
+PHP_VER=$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 'unknown')
+good "PHP found: $PHP_VER"
+
+# WP-CLI
+if ! command -v wp &>/dev/null; then
+    die "wp (WP-CLI) not found — install it first: https://wp-cli.org/#installing"
+fi
+WP_VER=$(wp --version 2>/dev/null | head -1 || echo 'unknown')
+good "WP-CLI found: $WP_VER"
+
+# Check we're in a WordPress root
+if [[ ! -f "wp-config.php" && ! -f "../wp-config.php" ]]; then
+    warn "wp-config.php not found in current or parent directory"
+    note "Run this script from your WordPress site root (htdocs / public_html)"
+    note "Continuing anyway — wp commands may fail if WP root can't be detected"
+else
+    good "WordPress root detected"
+fi
+
+# ── Environment setup ─────────────────────────────────────────
+section "2. ENVIRONMENT SETUP"
+
+# Set up paths
+COMPOSER_HOME="${HOME}/.config/composer"
+WP_CLI_PACKAGES_DIR="${HOME}/.config/wp-cli/packages"
+
+# Ensure the paths are exported for this session regardless of ~/.profile state
+export COMPOSER_HOME
+export WP_CLI_PACKAGES_DIR
+
+row "COMPOSER_HOME"        "$COMPOSER_HOME"
+row "WP_CLI_PACKAGES_DIR"  "$WP_CLI_PACKAGES_DIR"
+
+# Create ~/.config if needed
+if [[ ! -d "${HOME}/.config" ]]; then
+    step "Creating ~/.config directory"
+    mkdir -p "${HOME}/.config"
+    good "Created ~/.config"
+else
+    good "~/.config already exists"
+fi
+
+# Persist env vars to ~/.profile if not already there
+if ! grep -q 'COMPOSER_HOME' "${HOME}/.profile" 2>/dev/null; then
+    step "Adding COMPOSER_HOME and WP_CLI_PACKAGES_DIR to ~/.profile"
+    {
+        echo ''
+        echo '# Composer'
+        echo 'export COMPOSER_HOME="$HOME/.config/composer"'
+        echo ''
+        echo '# WP-CLI packages'
+        echo 'export WP_CLI_PACKAGES_DIR="$HOME/.config/wp-cli/packages"'
+    } >> "${HOME}/.profile"
+    good "Environment variables added to ~/.profile"
+else
+    good "Environment variables already in ~/.profile"
+fi
+
+# ── Composer ──────────────────────────────────────────────────
+section "3. COMPOSER"
+
+COMPOSER_BIN="${HOME}/.config/composer.phar"
+
+if [[ -f "$COMPOSER_BIN" ]]; then
+    COMPOSER_VER=$(php "$COMPOSER_BIN" --version 2>/dev/null | head -1 || echo 'unknown')
+    good "Composer already installed: $COMPOSER_VER"
+else
+    step "Downloading Composer installer..."
+    cd "${HOME}/.config"
+
+    if ! php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" 2>/dev/null; then
+        die "Failed to download Composer installer — check internet access"
+    fi
+    good "Installer downloaded"
+
+    step "Running Composer installer..."
+    if ! php composer-setup.php --quiet 2>/dev/null; then
+        die "Composer installer failed"
+    fi
+    rm -f composer-setup.php
+
+    # composer.phar lands in the current dir (~/.config)
+    COMPOSER_BIN="${HOME}/.config/composer.phar"
+    COMPOSER_VER=$(php "$COMPOSER_BIN" --version 2>/dev/null | head -1 || echo 'unknown')
+    good "Composer installed: $COMPOSER_VER"
+
+    # Return to original directory
+    cd - >/dev/null
+fi
+
+# Convenience alias for this session
+composer() { php "$COMPOSER_BIN" "$@"; }
+
+# ── wp-cli/profile-command ────────────────────────────────────
+section "4. WP-CLI PROFILE COMMAND"
+
+# Check if already installed
+if wp package list 2>/dev/null | grep -q 'wp-cli/profile-command'; then
+    PROFILE_VER=$(wp package list 2>/dev/null | grep 'profile-command' | awk '{print $2}' || echo 'installed')
+    good "wp-cli/profile-command already installed ($PROFILE_VER)"
+else
+    step "Installing wp-cli/profile-command..."
+    note "This may take a minute..."
+    if ! wp package install wp-cli/profile-command 2>&1; then
+        bad "Failed to install wp-cli/profile-command"
+        note "Try manually: wp package install wp-cli/profile-command"
+        note "Or check: wp package list"
+        exit 1
+    fi
+    good "wp-cli/profile-command installed successfully"
+fi
+
+# Verify the profile command is available
+if ! wp help profile &>/dev/null 2>&1; then
+    die "wp profile command not available after install — try opening a new shell session and re-running"
+fi
+good "wp profile command is available"
+
+# ── Run profile ───────────────────────────────────────────────
+section "5. WP PROFILE — STAGE BREAKDOWN"
+
+note "Profiling WordPress load stages (this makes a real request)..."
+note "Stages: bootstrap → main_query → template"
+echo ""
+
+# Run stage profile — allow it to fail gracefully
+if ! wp profile stage --all --orderby=time --color 2>&1; then
+    warn "wp profile stage failed — site may not be reachable via loopback"
+    note "Ensure the site URL is correct in wp-config.php / WP settings"
+    note "Some managed hosts block loopback requests"
+fi
+
+# ── Hook-level breakdown ──────────────────────────────────────
+section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
+
+note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
+echo ""
+
+if ! wp profile hook --all --orderby=time --color 2>&1; then
+    warn "wp profile hook failed"
+    note "This requires a working loopback HTTP connection"
+fi
+
+# ── Spotlight — slow hooks only ───────────────────────────────
+section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
+
+note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
+echo ""
+
+if ! wp profile hook --all --spotlight --orderby=time --color 2>&1; then
+    warn "wp profile hook --spotlight failed"
+fi
+
+# ── Hook breakdown for wp (main query) stage ─────────────────
+section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
+
+note "Profiling hooks during the main query stage..."
+echo ""
+
+if ! wp profile hook wp --orderby=time --color 2>&1; then
+    warn "wp profile hook wp failed"
+    note "The 'wp' stage runs after query vars are set — usually where template logic fires"
+fi
+
+# ── Summary ───────────────────────────────────────────────────
+section "SUMMARY & NEXT STEPS"
+
+echo ""
+echo -e "  ${BLD}What to look for in the output above:${RST}"
+echo ""
+echo "  Stage breakdown (Section 5):"
+echo "    • High 'bootstrap' time → slow plugin loading, no OPcache"
+echo "    • High 'main_query' time → slow DB queries, unoptimised WP_Query"
+echo "    • High 'template' time → heavy theme, slow shortcodes/blocks"
+echo ""
+echo "  Hook breakdown (Sections 6–8):"
+echo "    • Hooks with high 'time' and many 'cb' (callbacks) are worth investigating"
+echo "    • Note the source — plugin name usually appears in the callback or hook name"
+echo "    • 'wp_head' and 'wp_footer' are expected to be busy; look for surprises"
+echo ""
+echo "  Spotlight (Section 7):"
+echo "    • These are your actionable items — hooks taking ≥1ms of real time"
+echo "    • Cross-reference with Section 4 of wp-perf-diag.php (plugins list)"
+echo ""
+echo -e "  ${BLD}Useful follow-up commands:${RST}"
+echo ""
+echo "    # Profile a specific hook in detail:"
+echo "    wp profile hook init --orderby=time"
+echo ""
+echo "    # Profile with a specific URL (useful for page-specific slowness):"
+echo "    wp profile stage --all --url=https://example.com/slow-page/"
+echo ""
+echo "    # Profile the template stage specifically:"
+echo "    wp profile hook template_redirect --orderby=time"
+echo ""
+echo "    # Uninstall profile command when done:"
+echo "    wp package remove wp-cli/profile-command"
+echo ""
+row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo ""

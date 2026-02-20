@@ -14,7 +14,9 @@ set -euo pipefail
 
 # ── Colours ──────────────────────────────────────────────────
 RED='\033[0;31m'; YLW='\033[0;33m'; GRN='\033[0;32m'
-CYN='\033[0;36m'; BLD='\033[1m';    RST='\033[0m'
+PRI='\033[1;38;2;182;29;111m'   # #b61d6f — primary (bars)
+SEC='\033[1;38;2;59;73;86m'     # #3b4956 — secondary (titles)
+BLD='\033[1m';    RST='\033[0m'
 BAR="$(printf '─%.0s' {1..64})"
 
 # ── Args ──────────────────────────────────────────────────────
@@ -42,12 +44,12 @@ TARGET_URL="${TARGET_URL%/}"
 DOMAIN=$(echo "$TARGET_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')
 
 # ── Helpers ───────────────────────────────────────────────────
-section() { echo -e "\n${CYN}${BAR}${RST}\n${BLD}  $1${RST}\n${CYN}${BAR}${RST}"; }
+section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}"; }
 row()     { printf "  ${BLD}%-38s${RST} %s\n" "$1" "$2"; }
 good()    { echo -e "  ${GRN}✓ $1${RST}"; }
 warn()    { echo -e "  ${YLW}⚠ $1${RST}"; }
 bad()     { echo -e "  ${RED}✗ $1${RST}"; }
-note()    { echo -e "  ${CYN}↳ $1${RST}"; }
+note()    { echo -e "  ${SEC}↳ $1${RST}"; }
 require() {
     if ! command -v "$1" &>/dev/null; then
         warn "$1 not found — skipping related checks. Install with: brew install $1"
@@ -57,7 +59,7 @@ require() {
 }
 
 # ── Header ────────────────────────────────────────────────────
-echo -e "\n${BLD}${CYN}"
+echo -e "\n${PRI}"
 echo "  ┌──────────────────────────────────────────────────────────┐"
 echo "  │          WP External Performance Diagnostics             │"
 echo "  │                  wp-perf-check.sh                        │"
@@ -811,7 +813,7 @@ elif echo "$X_AC_WARM" | grep -qi "BYPASS"; then
 fi
 
 echo ""
-echo -e "  ${CYN}Next steps:${RST}"
+echo -e "  ${SEC}Next steps:${RST}"
 echo "    • Run wp-perf-diag.php server-side for DB/plugin/object cache detail"
 echo "    • Use Query Monitor plugin for per-request query analysis"
 echo "    • Check GTmetrix / WebPageTest for waterfall breakdown"

@@ -61,10 +61,11 @@ $GLOBALS['is_cli'] = $is_cli;
 function section(string $title): void {
     $is_cli = $GLOBALS['is_cli'];
     $bar = str_repeat('─', 60);
+    // Primary colour (#b61d6f) for bars, secondary (#3b4956) for titles
     $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
-    $GLOBALS['out'][] = $is_cli ? "\033[1;33m  $title\033[0m" : "  $title";
-    $GLOBALS['out'][] = $is_cli ? "\033[1;36m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m  $title\033[0m" : "  $title";
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
 }
 
 function row(string $label, $value, string $status = ''): void {
