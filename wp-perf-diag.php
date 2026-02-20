@@ -1640,7 +1640,6 @@ if (class_exists('WooCommerce')) {
         $wins[] = 'No expired WooCommerce sessions';
 }
 
-$GLOBALS['out'][] = '';
 if ($wins) {
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ✓ Positives:\033[0m" : '  ✓ Positives:';
     foreach ($wins as $w) good("  $w");
