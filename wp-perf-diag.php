@@ -66,6 +66,7 @@ function section(string $title): void {
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m$bar\033[0m" : $bar;
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  $title\033[0m" : "  $title";
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = '';
 }
 
 function row(string $label, $value, string $status = ''): void {
@@ -531,8 +532,12 @@ foreach ($active_plugins as $plugin_file) {
     $plugin_data = $all_plugins[$plugin_file] ?? null;
     $name    = $plugin_data ? $plugin_data['Name'] : $plugin_file;
     $version = $plugin_data ? 'v' . $plugin_data['Version'] : '';
-    $line = sprintf("    %-50s %s", substr($name, 0, 50), $version);
-    $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
+    if ($is_cli) {
+        $GLOBALS['out'][] = sprintf("    \033[38;2;136;146;160m%-50s\033[0m %s",
+            substr($name, 0, 50), $version);
+    } else {
+        $GLOBALS['out'][] = sprintf("    %-50s %s", substr($name, 0, 50), $version);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -679,9 +684,13 @@ foreach ($notable_hooks as $name => $count) {
         ? ' [priority ' . $priority_spread[$name][0] . '–' . $priority_spread[$name][1] . ']'
         : '';
     $flag    = $count > 20 ? ' [WARN]' : '';
-    $line = sprintf("    %-45s %d callbacks%s%s",
-        substr($name, 0, 45), $count, $spread, $flag);
-    $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
+    if ($is_cli) {
+        $GLOBALS['out'][] = sprintf("    \033[38;2;136;146;160m%-45s\033[0m %d callbacks%s%s",
+            substr($name, 0, 45), $count, $spread, $flag);
+    } else {
+        $GLOBALS['out'][] = sprintf("    %-45s %d callbacks%s%s",
+            substr($name, 0, 45), $count, $spread, $flag);
+    }
 }
 
 // Hooks with unusually wide priority spreads (can indicate load-order conflicts)
@@ -693,9 +702,13 @@ if ($wide_spread) {
     $shown = 0;
     foreach ($wide_spread as $name => $p) {
         if ($shown++ >= 10) break;
-        $line = sprintf("    %-45s priority %d–%d (spread: %d)",
-            substr($name, 0, 45), $p[0], $p[1], $p[1] - $p[0]);
-        $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
+        if ($is_cli) {
+            $GLOBALS['out'][] = sprintf("    \033[38;2;136;146;160m%-45s\033[0m priority %d–%d (spread: %d)",
+                substr($name, 0, 45), $p[0], $p[1], $p[1] - $p[0]);
+        } else {
+            $GLOBALS['out'][] = sprintf("    %-45s priority %d–%d (spread: %d)",
+                substr($name, 0, 45), $p[0], $p[1], $p[1] - $p[0]);
+        }
     }
 }
 
@@ -782,9 +795,13 @@ if ($plugin_cron) {
         $sched_label = $scheds ? implode('/', $scheds) : 'once';
         $flag = '';
         if ($count > 10) $flag = ' [WARN: many instances]';
-        $line = sprintf("    %-50s %d × %s%s",
-            substr($hook, 0, 50), $count, $sched_label, $flag);
-        $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
+        if ($is_cli) {
+            $GLOBALS['out'][] = sprintf("    \033[38;2;136;146;160m%-50s\033[0m %d × %s%s",
+                substr($hook, 0, 50), $count, $sched_label, $flag);
+        } else {
+            $GLOBALS['out'][] = sprintf("    %-50s %d × %s%s",
+                substr($hook, 0, 50), $count, $sched_label, $flag);
+        }
     }
 } else {
     good('No non-core cron hooks found');
@@ -1415,8 +1432,12 @@ if (!class_exists('WooCommerce')) {
         arsort($wc_cron_jobs);
         heading('WooCommerce cron hooks:');
         foreach (array_slice($wc_cron_jobs, 0, 15, true) as $hook => $count) {
-            $line = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
-            $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
+            if ($is_cli) {
+                $GLOBALS['out'][] = sprintf("    \033[38;2;136;146;160m%-55s\033[0m %d instance(s)",
+                    substr($hook, 0, 55), $count);
+            } else {
+                $GLOBALS['out'][] = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
+            }
         }
     }
 }
@@ -1624,6 +1645,7 @@ if ($wins) {
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ✓ Positives:\033[0m" : '  ✓ Positives:';
     foreach ($wins as $w) good("  $w");
 }
+$GLOBALS['out'][] = '';
 if ($issues) {
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ⚠ Issues/Recommendations:\033[0m" : '  ⚠ Issues/Recommendations:';
     foreach ($issues as $i) warn("  $i");
