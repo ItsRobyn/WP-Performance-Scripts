@@ -84,6 +84,13 @@ function row(string $label, $value, string $status = ''): void {
     $GLOBALS['out'][] = $line;
 }
 
+function heading(string $msg): void {
+    $is_cli = $GLOBALS['is_cli'];
+    // Sub-heading: bold pink, lighter weight than a full section()
+    $GLOBALS['out'][] = '';
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  $msg\033[0m" : "  $msg";
+}
+
 function note(string $msg): void {
     $is_cli = $GLOBALS['is_cli'];
     // Soft grey + italic for supplementary context
@@ -227,15 +234,14 @@ row('Table Prefix', $wpdb->prefix);
 $tables = $wpdb->get_results("SHOW TABLE STATUS");
 if ($tables) {
     usort($tables, fn($a, $b) => (($b->Data_length + $b->Index_length) <=> ($a->Data_length + $a->Index_length)));
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Top tables by size:';
+    heading('Top tables by size:');
     foreach (array_slice($tables, 0, 15) as $t) {
         $size = (int)$t->Data_length + (int)$t->Index_length;
         $rows = number_format((int)$t->Rows);
         row('  ' . $t->Name, bytes($size) . " (~{$rows} rows)");
     }
 } else {
-    $GLOBALS['out'][] = '  Top tables by size: (unavailable — insufficient permissions)';
+    heading('Top tables by size: (unavailable — insufficient permissions)');
 }
 
 // Check autoload options size
@@ -258,7 +264,7 @@ if ($autoload_kb > 200) {
         ORDER BY size DESC
         LIMIT 10
     ");
-    $GLOBALS['out'][] = '  Largest autoloaded options:';
+    heading('Largest autoloaded options:');
     foreach ($big_autoloads as $opt) {
         row('    ' . substr($opt->option_name, 0, 40), bytes((int)$opt->size));
     }
@@ -309,8 +315,7 @@ if ($tables) {
     }
     if ($fragmented) {
         arsort($fragmented);
-        $GLOBALS['out'][] = '';
-        $GLOBALS['out'][] = '  Fragmented tables (>1 MB wasted, ≥10% overhead):';
+        heading('Fragmented tables (>1 MB wasted, ≥10% overhead):');
         foreach (array_slice($fragmented, 0, 10, true) as $tname => $info) {
             row('  ' . $tname, bytes($info['free']) . ' free (' . $info['pct'] . '% overhead)', 'WARN');
         }
@@ -321,8 +326,7 @@ if ($tables) {
 }
 
 // ── DB: Missing indexes on core tables ──────────────────────
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Core table index checks:';
+heading('Core table index checks:');
 $index_checks = [
     $wpdb->posts    => ['post_author', 'post_status', 'post_type', 'post_parent', 'post_date'],
     $wpdb->postmeta => ['post_id', 'meta_key'],
@@ -411,7 +415,7 @@ if (isset($wp_object_cache) && method_exists($wp_object_cache, 'stats')) {
     $wp_object_cache->stats();
     $stats_output = ob_get_clean();
     if ($stats_output) {
-        $GLOBALS['out'][] = '  Cache stats output captured (raw):';
+        heading('Cache stats output captured (raw):');
         $GLOBALS['out'][] = '  ' . strip_tags(str_replace('<br />', "\n  ", $stats_output));
     }
 }
@@ -443,7 +447,7 @@ row('Plugins needing updates',   $plugins_needing_update, $plugins_needing_updat
 
 // List plugins with available updates
 if ($plugins_needing_update > 0 && isset($update_transient->response)) {
-    $GLOBALS['out'][] = '  Plugins with available updates:';
+    heading('Plugins with available updates:');
     foreach ($update_transient->response as $slug => $data) {
         $current = $all_plugins[$slug]['Version'] ?? '?';
         $new_ver = $data->new_version ?? '?';
@@ -515,15 +519,14 @@ foreach ($perf_plugins as $slug => $info) {
 }
 
 if ($found_perf_plugins) {
-    $GLOBALS['out'][] = '  Notable active plugins:';
+    heading('Notable active plugins:');
     foreach ($found_perf_plugins as $p) {
         row('  ' . $p[0], '[' . $p[1] . ']');
     }
 }
 
 // List all active plugins with version
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  All active plugins:';
+heading('All active plugins:');
 foreach ($active_plugins as $plugin_file) {
     $plugin_data = $all_plugins[$plugin_file] ?? null;
     $name    = $plugin_data ? $plugin_data['Name'] : $plugin_file;
@@ -551,7 +554,7 @@ if ($savequeries_on && !empty($wpdb->queries)) {
     // Slowest queries
     $sorted = $wpdb->queries;
     usort($sorted, fn($a, $b) => $b[1] <=> $a[1]);
-    $GLOBALS['out'][] = '  Slowest 5 queries:';
+    heading('Slowest 5 queries:');
     foreach (array_slice($sorted, 0, 5) as $q) {
         $GLOBALS['out'][] = sprintf("    %s | %s", ms($q[1]), substr($q[0], 0, 120));
     }
@@ -653,8 +656,7 @@ row('Total hook callbacks', $total_callbacks, $total_callbacks > 5000 ? 'WARN' :
 // Callbacks by source
 if ($callbacks_by_src) {
     arsort($callbacks_by_src);
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Callbacks by source:';
+    heading('Callbacks by source:');
     foreach ($callbacks_by_src as $src => $count) {
         row('  ' . $src, $count);
     }
@@ -668,8 +670,7 @@ $notable_hooks = array_filter(
     ARRAY_FILTER_USE_KEY
 );
 
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Top 15 hooks by callback count (excluding routine core hooks):';
+heading('Top 15 hooks by callback count (excluding routine core hooks):');
 $shown = 0;
 foreach ($notable_hooks as $name => $count) {
     if ($shown++ >= 15) break;
@@ -686,8 +687,7 @@ $wide_spread = array_filter($priority_spread, fn($p) => ($p[1] - $p[0]) > 100);
 if ($wide_spread) {
     arsort($wide_spread); // sort by hook name; could sort by spread size
     uasort($wide_spread, fn($a, $b) => ($b[1] - $b[0]) <=> ($a[1] - $a[0]));
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Hooks with wide priority spreads (possible load-order conflicts):';
+    heading('Hooks with wide priority spreads (possible load-order conflicts):');
     $shown = 0;
     foreach ($wide_spread as $name => $p) {
         if ($shown++ >= 10) break;
@@ -754,8 +754,7 @@ row('Overdue timestamps',    $overdue, $overdue > 10 ? 'WARN' : 'OK');
 
 // Fast-scheduling hooks
 if ($fast_hooks) {
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Hooks scheduled more often than every 5 minutes:';
+    heading('Hooks scheduled more often than every 5 minutes:');
     foreach ($fast_hooks as $hook => $interval) {
         $every = $interval >= 60 ? round($interval / 60, 1) . ' min' : $interval . 's';
         warn("  $hook (every $every)");
@@ -771,8 +770,7 @@ $plugin_cron = array_filter(
 );
 
 if ($plugin_cron) {
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Cron hook breakdown (non-core, by instance count):';
+    heading('Cron hook breakdown (non-core, by instance count):');
     $shown = 0;
     foreach ($plugin_cron as $hook => $count) {
         if ($shown++ >= 20) break;
@@ -856,8 +854,7 @@ if (is_wp_error($response)) {
         'surrogate-control', 'x-proxy-cache',
     ];
 
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Cache & CDN headers:';
+    heading('Cache & CDN headers:');
     foreach ($cache_headers as $h) {
         $val = $headers->offsetGet($h);
         if ($val) {
@@ -1059,8 +1056,7 @@ if ($upload_dir && is_dir($upload_dir)) {
 }
 
 // Top 10 directories within wp-content by size
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Top 10 directories in wp-content by size:';
+heading('Top 10 directories in wp-content by size:');
 $dir_sizes_raw = shell_exec("du -hsx " . escapeshellarg($wp_content) . "/* 2>/dev/null | sort -rh | head -n 10");
 if ($dir_sizes_raw) {
     foreach (explode("\n", trim($dir_sizes_raw)) as $line) {
@@ -1089,8 +1085,7 @@ if ($upload_dir && is_dir($upload_dir)) {
 }
 
 // ── Media library checks ─────────────────────────────────────
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Media library:';
+heading('Media library:');
 
 // Total media items
 $total_media = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'attachment'");
@@ -1120,7 +1115,7 @@ if ($upload_dir && is_dir($upload_dir)) {
             // Show up to 5 examples, largest first
             $large_examples_raw = shell_exec("find " . escapeshellarg($upload_dir) . " -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' -o -iname '*.webp' \\) -size +2M -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -5");
             if ($large_examples_raw) {
-                $GLOBALS['out'][] = '  Largest images on disk:';
+                heading('Largest images on disk:');
                 foreach (explode("\n", trim($large_examples_raw)) as $line) {
                     if (!$line) continue;
                     [$size_bytes, $fpath] = explode("\t", $line, 2);
@@ -1135,8 +1130,7 @@ if ($upload_dir && is_dir($upload_dir)) {
 }
 
 // ── Error log checks ─────────────────────────────────────────
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Error logs:';
+heading('Error logs:');
 
 // WP debug.log
 $debug_log = WP_CONTENT_DIR . '/debug.log';
@@ -1172,7 +1166,7 @@ section('11. WORDPRESS SITE HEALTH');
 
 // ── Post & page counts ───────────────────────────────────────
 $post_types = get_post_types(['public' => true], 'objects');
-$GLOBALS['out'][] = '  Published content counts:';
+heading('Published content counts:');
 foreach ($post_types as $pt) {
     $counts = wp_count_posts($pt->name);
     $published = (int)($counts->publish ?? 0);
@@ -1190,8 +1184,7 @@ foreach ($post_types as $pt) {
 }
 
 // ── Users by role ────────────────────────────────────────────
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Users by role:';
+heading('Users by role:');
 global $wp_roles;
 if (!isset($wp_roles)) {
     $wp_roles = new WP_Roles();
@@ -1218,7 +1211,7 @@ if ($total_users > 10000) {
 $GLOBALS['out'][] = '';
 $theme = wp_get_theme();
 $parent = $theme->parent();
-$GLOBALS['out'][] = '  Active theme:';
+heading('Active theme:');
 // Fetch theme update transient once — keyed by stylesheet (directory name)
 $theme_updates = get_site_transient('update_themes');
 $theme_stylesheet  = $theme->get_stylesheet();   // child theme dir
@@ -1274,8 +1267,7 @@ row('Orphaned term relationships', $orphaned_terms,
 
 // ── Multisite-specific ───────────────────────────────────────
 if (is_multisite()) {
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Multisite:';
+    heading('Multisite:');
     $site_count = get_sites(['count' => true]);
     row('  Network sites', $site_count, (int)$site_count > 100 ? 'INFO' : 'OK');
     $blog_table = $wpdb->blogs;
@@ -1320,8 +1312,7 @@ if (!class_exists('WooCommerce')) {
     }
 
     // ── Order counts by status ───────────────────────────────
-    $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = '  Order counts by status:';
+    heading('Order counts by status:');
     if ($hpos_option === 'yes') {
         // HPOS: orders are in wc_orders table
         $orders_table = $wpdb->prefix . 'wc_orders';
@@ -1416,7 +1407,7 @@ if (!class_exists('WooCommerce')) {
     row('WC overdue cron events', $overdue_wc_cron, $overdue_wc_cron > 5 ? 'WARN' : 'OK');
     if ($wc_cron_jobs) {
         arsort($wc_cron_jobs);
-        $GLOBALS['out'][] = '  WooCommerce cron hooks:';
+        heading('WooCommerce cron hooks:');
         foreach (array_slice($wc_cron_jobs, 0, 15, true) as $hook => $count) {
             $GLOBALS['out'][] = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
         }
