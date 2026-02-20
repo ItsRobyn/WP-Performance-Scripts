@@ -82,7 +82,7 @@ function row(string $label, $value, string $status = ''): void {
 
 function note(string $msg): void {
     $is_cli = $GLOBALS['is_cli'];
-    $GLOBALS['out'][] = $is_cli ? "  \033[2m↳ $msg\033[0m" : "    ↳ $msg";
+    $GLOBALS['out'][] = $is_cli ? "  \033[1;38;2;255;255;255m↳ $msg\033[0m" : "    ↳ $msg";
 }
 
 function warn(string $msg): void {
