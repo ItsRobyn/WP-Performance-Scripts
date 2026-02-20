@@ -15,7 +15,7 @@ set -euo pipefail
 # ── Colours ──────────────────────────────────────────────────
 RED='\033[0;31m'; YLW='\033[0;33m'; GRN='\033[0;32m'
 PRI='\033[1;38;2;182;29;111m'   # #b61d6f — primary (bars)
-SEC='\033[1;38;2;59;73;86m'     # #3b4956 — secondary (titles)
+SEC='\033[1;38;2;255;255;255m'  # #ffffff — secondary (titles)
 BLD='\033[1m';    RST='\033[0m'
 BAR="$(printf '─%.0s' {1..64})"
 

@@ -61,10 +61,10 @@ $GLOBALS['is_cli'] = $is_cli;
 function section(string $title): void {
     $is_cli = $GLOBALS['is_cli'];
     $bar = str_repeat('─', 60);
-    // Primary colour (#b61d6f) for bars, secondary (#3b4956) for titles
+    // Primary colour (#b61d6f) for bars, secondary (#ffffff) for titles
     $GLOBALS['out'][] = '';
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
-    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m  $title\033[0m" : "  $title";
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;255;255;255m  $title\033[0m" : "  $title";
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
 }
 
@@ -813,6 +813,12 @@ $home_url = get_home_url();
 note("Making HTTP request to: $home_url");
 note("This checks cache headers, TTFB, and edge caching signals.");
 
+// Initialise cache-header vars — populated inside the response block, read in summary.
+$x_nananana  = null; // from 1st request (no-cache)
+$x_ac        = null; // from 1st request
+$x_nananana2 = null; // from 2nd request (warm)
+$x_ac2       = null; // from 2nd request
+
 $start_http = microtime(true);
 $response = wp_remote_get($home_url, [
     'timeout'    => 15,
@@ -1461,7 +1467,35 @@ $issues = [];
 $wins   = [];
 
 if (!$using_external_cache)      $issues[] = 'No external object cache — consider Redis or Memcached';
-if (!$is_batcache && !defined('DISABLE_WP_CRON')) $issues[] = 'No Batcache drop-in detected in wp-content/';
+
+// Batcache: use the warm (2nd) request header for the most reliable signal
+$batcache_hit   = $x_nananana2 !== null && stripos($x_nananana2, 'Batcache-Hit') !== false;
+$batcache_set   = ($x_nananana !== null && stripos($x_nananana, 'Batcache-Set') !== false)
+               || ($x_nananana2 !== null && stripos($x_nananana2, 'Batcache-Set') !== false);
+$batcache_seen  = $x_nananana !== null || $x_nananana2 !== null;
+if (!$batcache_hit && !$batcache_set && !$batcache_seen && $is_batcache)
+    $issues[] = 'Batcache drop-in is present but x-nananana header was absent — Batcache may be bypassed';
+elseif (!$batcache_hit && $batcache_set)
+    $issues[] = 'Batcache SET on warm request — cache was written but a HIT was not confirmed';
+elseif (!$batcache_seen && !$is_batcache)
+    $issues[] = 'No Batcache drop-in detected and x-nananana absent — page caching is likely not active';
+
+// Edge cache (x-ac)
+$edge_hit    = ($x_ac2 !== null && stripos($x_ac2, 'HIT') !== false)
+            || ($x_ac !== null && stripos($x_ac, 'HIT') !== false);
+$edge_bypass = ($x_ac !== null && stripos($x_ac, 'BYPASS') !== false)
+            || ($x_ac2 !== null && stripos($x_ac2, 'BYPASS') !== false);
+$edge_miss   = !$edge_hit && !$edge_bypass
+            && ($x_ac !== null || $x_ac2 !== null)
+            && (($x_ac !== null && stripos($x_ac, 'MISS') !== false)
+                || ($x_ac2 !== null && stripos($x_ac2, 'MISS') !== false));
+if ($edge_bypass)
+    $issues[] = 'Edge cache BYPASS (x-ac) — caching is being skipped; investigate cache-busting cookies or headers';
+elseif ($edge_miss)
+    $issues[] = 'Edge cache MISS on warm request (x-ac) — page may not be caching at the edge';
+elseif ($x_ac === null && $x_ac2 === null)
+    $issues[] = 'x-ac header absent — edge cache not confirmed active for this URL';
+
 if ($autoload_kb > 200)          $issues[] = "Autoloaded options are large ({$autoload_kb} KB) — audit with Query Monitor";
 if ((int)$expired_transients > 100) $issues[] = "Many expired transients ({$expired_transients}) — run WP-CLI: wp transient delete --expired";
 if ((int)$revision_count > 500)  $issues[] = "High revision count ({$revision_count}) — set WP_POST_REVISIONS in wp-config.php";
@@ -1538,8 +1572,9 @@ if (isset($php_log_size) && $php_log_size > 10485760)
 
 // Caching
 if ($using_external_cache)       $wins[] = 'External object cache is active';
-if ($is_batcache)                $wins[] = 'Batcache page caching is present';
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
+if ($batcache_hit)               $wins[] = 'Batcache is working — confirmed HIT on warm request (x-nananana)';
+if ($edge_hit)                   $wins[] = 'Edge cache is working — confirmed HIT (x-ac)';
 
 // Performance
 if (isset($ttfb) && $ttfb < 0.3) $wins[] = 'Excellent TTFB (' . ms($ttfb) . ')';
