@@ -531,7 +531,8 @@ foreach ($active_plugins as $plugin_file) {
     $plugin_data = $all_plugins[$plugin_file] ?? null;
     $name    = $plugin_data ? $plugin_data['Name'] : $plugin_file;
     $version = $plugin_data ? 'v' . $plugin_data['Version'] : '';
-    $GLOBALS['out'][] = sprintf("    %-50s %s", substr($name, 0, 50), $version);
+    $line = sprintf("    %-50s %s", substr($name, 0, 50), $version);
+    $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -678,8 +679,9 @@ foreach ($notable_hooks as $name => $count) {
         ? ' [priority ' . $priority_spread[$name][0] . '–' . $priority_spread[$name][1] . ']'
         : '';
     $flag    = $count > 20 ? ' [WARN]' : '';
-    $GLOBALS['out'][] = sprintf("    %-45s %d callbacks%s%s",
+    $line = sprintf("    %-45s %d callbacks%s%s",
         substr($name, 0, 45), $count, $spread, $flag);
+    $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
 }
 
 // Hooks with unusually wide priority spreads (can indicate load-order conflicts)
@@ -691,8 +693,9 @@ if ($wide_spread) {
     $shown = 0;
     foreach ($wide_spread as $name => $p) {
         if ($shown++ >= 10) break;
-        $GLOBALS['out'][] = sprintf("    %-45s priority %d–%d (spread: %d)",
+        $line = sprintf("    %-45s priority %d–%d (spread: %d)",
             substr($name, 0, 45), $p[0], $p[1], $p[1] - $p[0]);
+        $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
     }
 }
 
@@ -779,8 +782,9 @@ if ($plugin_cron) {
         $sched_label = $scheds ? implode('/', $scheds) : 'once';
         $flag = '';
         if ($count > 10) $flag = ' [WARN: many instances]';
-        $GLOBALS['out'][] = sprintf("    %-50s %d × %s%s",
+        $line = sprintf("    %-50s %d × %s%s",
             substr($hook, 0, 50), $count, $sched_label, $flag);
+        $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
     }
 } else {
     good('No non-core cron hooks found');
@@ -1381,9 +1385,11 @@ if (!class_exists('WooCommerce')) {
         }
     }
     if ($enabled_gateways) {
-        row('Active payment gateways', count($enabled_gateways));
+        heading('Active payment gateways:');
         foreach ($enabled_gateways as $gw) {
-            $GLOBALS['out'][] = '    ' . $gw;
+            $GLOBALS['out'][] = $is_cli
+                ? "  \033[38;2;136;146;160m  $gw\033[0m"
+                : "    $gw";
         }
     } else {
         row('Active payment gateways', 'none detected', 'WARN');
@@ -1409,7 +1415,8 @@ if (!class_exists('WooCommerce')) {
         arsort($wc_cron_jobs);
         heading('WooCommerce cron hooks:');
         foreach (array_slice($wc_cron_jobs, 0, 15, true) as $hook => $count) {
-            $GLOBALS['out'][] = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
+            $line = sprintf("    %-55s %d instance(s)", substr($hook, 0, 55), $count);
+            $GLOBALS['out'][] = $is_cli ? "\033[38;2;136;146;160m$line\033[0m" : $line;
         }
     }
 }
@@ -1614,21 +1621,21 @@ if (class_exists('WooCommerce')) {
 
 $GLOBALS['out'][] = '';
 if ($wins) {
-    $GLOBALS['out'][] = '  ✓ Positives:';
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ✓ Positives:\033[0m" : '  ✓ Positives:';
     foreach ($wins as $w) good("  $w");
 }
-
-$GLOBALS['out'][] = '';
 if ($issues) {
-    $GLOBALS['out'][] = '  ⚠ Issues/Recommendations:';
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ⚠ Issues/Recommendations:\033[0m" : '  ⚠ Issues/Recommendations:';
     foreach ($issues as $i) warn("  $i");
 } else {
     good('  No major issues detected!');
 }
 
 $GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Generated: ' . date('Y-m-d H:i:s T');
-$GLOBALS['out'][] = '  Site: ' . get_site_url();
+$footer_style = $is_cli ? "\033[3;38;2;136;146;160m" : '';
+$footer_reset  = $is_cli ? "\033[0m" : '';
+$GLOBALS['out'][] = $footer_style . '  Generated: ' . date('Y-m-d H:i:s T') . $footer_reset;
+$GLOBALS['out'][] = $footer_style . '  Site: ' . get_site_url() . $footer_reset;
 $GLOBALS['out'][] = '';
 
 // ── Output ────────────────────────────────────────────────────
@@ -1652,8 +1659,10 @@ echo $full_output;
 $plain_output = preg_replace('/\033\[[0-9;]*m/', '', $full_output);
 $report_filename = 'wp-perf-diag-' . date('Y-m-d-His') . '-' . parse_url(get_site_url(), PHP_URL_HOST) . '.txt';
 $report_path = getcwd() . '/' . $report_filename;
+$save_style = $is_cli ? "\033[3;38;2;136;146;160m" : '';
+$save_reset  = $is_cli ? "\033[0m" : '';
 if (file_put_contents($report_path, $plain_output) !== false) {
-    echo "\n  Report saved: $report_filename\n";
+    echo $save_style . "  Report saved: $report_filename" . $save_reset . "\n";
 } else {
-    echo "\n  Could not write report to: $report_path\n";
+    echo $save_style . "  Could not write report to: $report_path" . $save_reset . "\n";
 }
