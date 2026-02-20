@@ -1480,10 +1480,9 @@ if (isset($parent_new_ver) && $parent_new_ver)
     $issues[] = "Parent theme \"" . $parent->get('Name') . "\" has an update available (→ $parent_new_ver)";
 if (isset($wc_new_ver) && $wc_new_ver && isset($wc_current_ver) && version_compare($wc_current_ver, $wc_new_ver, '<'))
     $issues[] = "WooCommerce is outdated ($wc_current_ver → $wc_new_ver)";
-// OPcache: only recommend requesting it from Platform Team if the site
-// has enough PHP complexity to make a meaningful difference — i.e. a page
-// builder, high plugin count, or high asset count. Low-complexity sites
-// wouldn't justify the request.
+// OPcache: only recommend enabling it if the site has enough PHP complexity
+// to make a meaningful difference — i.e. a page builder, high plugin count,
+// or high asset count. Low-complexity sites wouldn't benefit noticeably.
 $has_builder        = !empty(array_filter($found_perf_plugins, fn($p) => $p[1] === 'builder'));
 $high_plugin_count  = count($active_plugins) >= 40;
 $high_scripts       = $enqueued_scripts > 20;
@@ -1504,7 +1503,7 @@ if ($opcache_worthwhile) {
     if ($has_builder)       $reasons[] = 'page builder active';
     if ($high_scripts)      $reasons[] = $enqueued_scripts . ' enqueued scripts';
     if ($high_styles)       $reasons[] = $enqueued_styles . ' enqueued styles';
-    $issues[] = 'OPcache not enabled — consider requesting from Platform Team (' . implode(', ', $reasons) . ')';
+    $issues[] = 'OPcache not enabled — consider enabling it (' . implode(', ', $reasons) . ')';
 }
 if ($enqueued_scripts > 20)      $issues[] = "High enqueued script count ($enqueued_scripts) — check for bloat";
 if ($enqueued_styles > 15)       $issues[] = "High enqueued style count ($enqueued_styles) — check for bloat";
