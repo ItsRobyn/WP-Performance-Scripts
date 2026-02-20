@@ -73,16 +73,21 @@ function row(string $label, $value, string $status = ''): void {
     $statusColors = ['OK' => '32', 'WARN' => '33', 'BAD' => '31', 'INFO' => '36', '' => '0'];
     $color = $statusColors[$status] ?? '0';
     $badge = $status ? "[$status]" : '';
-    if ($is_cli && $status) {
-        $badge = "\033[{$color}m$badge\033[0m";
+    if ($is_cli) {
+        // Label: soft grey (#8892a0), value: default white, badge: status colour
+        $styledLabel = "\033[38;2;136;146;160m$label\033[0m";
+        $badge = $status ? "\033[{$color}m$badge\033[0m" : '';
+        $line = sprintf("  %-58s %s %s", $styledLabel, $value, $badge);
+    } else {
+        $line = sprintf("  %-35s %s %s", $label, $value, $badge);
     }
-    $line = sprintf("  %-35s %s %s", $label, $value, $badge);
     $GLOBALS['out'][] = $line;
 }
 
 function note(string $msg): void {
     $is_cli = $GLOBALS['is_cli'];
-    $GLOBALS['out'][] = $is_cli ? "  \033[1;38;2;255;255;255m↳ $msg\033[0m" : "    ↳ $msg";
+    // Soft grey + italic for supplementary context
+    $GLOBALS['out'][] = $is_cli ? "  \033[3;38;2;136;146;160m↳ $msg\033[0m" : "    ↳ $msg";
 }
 
 function warn(string $msg): void {
