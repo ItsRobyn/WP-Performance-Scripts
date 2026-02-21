@@ -290,6 +290,7 @@ if ($tables) {
 } else {
     heading('Top tables by size: (unavailable — insufficient permissions)');
 }
+$GLOBALS['out'][] = '';
 
 // Check autoload options size
 $autoload_size = $wpdb->get_var("
@@ -396,6 +397,7 @@ foreach ($index_checks as $table => $required_cols) {
 if ($index_issues === 0) {
     good('All checked core table indexes present');
 }
+$GLOBALS['out'][] = '';
 
 // ── DB: Orphaned postmeta ────────────────────────────────────
 $orphaned_postmeta = $wpdb->get_var("
