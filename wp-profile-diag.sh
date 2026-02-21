@@ -52,14 +52,25 @@ REPORT_TMPFILE="$(mktemp)"
 # trap. Simpler and more portable than process substitution (>(tee ...)) which
 # requires /dev/fd support not present on all Linux hosts.
 exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
-# Background tail so output still streams to the terminal in real time
+# Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
+# wp profile commands detect non-TTY stdout and switch to plain output,
+# breaking table formatting and making grep-based parsing return 0.
+# wp_profile() captures output with --format=table (forcing table output
+# regardless of TTY), echoes it so it hits the file/tail, and stores it
+# in a variable for summary parsing — one run, no repeated HTTP requests.
+wp_profile() {
+    local output
+    output=$(wp --no-color "$@" --format=table 2>/dev/null) || return 1
+    echo "$output"
+    WP_PROFILE_LAST="$output"
+}
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
 echo -e "  │${SEC}                 wp-profile-diag.sh                       ${PRI}│"
-echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
+echo -e "  │${SEC}                   By Robyn × Claude AI                   ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
@@ -192,10 +203,8 @@ note "Profiling WordPress load stages (this makes a real request)..."
 note "Stages: bootstrap → main_query → template"
 echo ""
 
-# Run directly so wp-cli renders its own table formatting to the terminal
-if wp --no-color profile stage --all --orderby=time; then
-    # Capture separately (quiet) just for analysis — table chars intact
-    STAGE_DATA=$(wp --no-color profile stage --all --orderby=time 2>/dev/null) || true
+if wp_profile profile stage --all --orderby=time; then
+    STAGE_DATA="$WP_PROFILE_LAST"
     STAGE_COUNT=$(echo "$STAGE_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total stages shown: ${STAGE_COUNT}"
@@ -211,8 +220,8 @@ section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
 note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
 echo ""
 
-if wp --no-color profile hook --all --orderby=time; then
-    HOOK_ALL_DATA=$(wp --no-color profile hook --all --orderby=time 2>/dev/null) || true
+if wp_profile profile hook --all --orderby=time; then
+    HOOK_ALL_DATA="$WP_PROFILE_LAST"
     HOOK_ALL_COUNT=$(echo "$HOOK_ALL_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total hooks shown: ${HOOK_ALL_COUNT}"
@@ -227,8 +236,8 @@ section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
 note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
 echo ""
 
-if wp --no-color profile hook --all --spotlight --orderby=time; then
-    SPOTLIGHT_DATA=$(wp --no-color profile hook --all --spotlight --orderby=time 2>/dev/null) || true
+if wp_profile profile hook --all --spotlight --orderby=time; then
+    SPOTLIGHT_DATA="$WP_PROFILE_LAST"
     SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total slow hooks shown: ${SPOTLIGHT_COUNT}"
@@ -242,8 +251,8 @@ section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
 note "Profiling hooks during the main query stage..."
 echo ""
 
-if wp --no-color profile hook wp --orderby=time; then
-    HOOK_WP_DATA=$(wp --no-color profile hook wp --orderby=time 2>/dev/null) || true
+if wp_profile profile hook wp --orderby=time; then
+    HOOK_WP_DATA="$WP_PROFILE_LAST"
     HOOK_WP_COUNT=$(echo "$HOOK_WP_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total hooks shown: ${HOOK_WP_COUNT}"
