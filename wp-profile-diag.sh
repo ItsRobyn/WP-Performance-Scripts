@@ -50,7 +50,6 @@ echo "  │                 wp-profile-diag.sh                       │"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 row "Run at"  "$(date '+%Y-%m-%d %H:%M:%S %Z')"
-row "CWD"     "$(pwd)"
 
 # ── Preflight checks ──────────────────────────────────────────
 section "1. PREFLIGHT CHECKS"
@@ -246,7 +245,91 @@ fi
 # ── Summary ───────────────────────────────────────────────────
 section "SUMMARY & NEXT STEPS"
 
-echo ""
+# ── Analysis ──────────────────────────────────────────────────
+WINS=()
+ISSUES=()
+
+# Parse stage times — columns: | stage | time | ... |
+# Extract time value (2nd pipe-delimited field) for each named stage
+parse_stage_time() {
+    local stage="$1" output="$2"
+    echo "$output" | grep "| $stage " | awk -F'|' '{gsub(/ /,"",$3); print $3}' | head -1
+}
+
+if [[ -n "${STAGE_OUT:-}" && "$STAGE_OUT" != *"Error"* ]]; then
+    BOOTSTRAP_T=$(parse_stage_time "bootstrap"  "$STAGE_OUT")
+    MAINQUERY_T=$(parse_stage_time "main_query" "$STAGE_OUT")
+    TEMPLATE_T=$(parse_stage_time  "template"   "$STAGE_OUT")
+
+    # Flag stages over 0.5s as slow, over 0.2s as a warning
+    check_stage() {
+        local name="$1" val="$2"
+        if [[ -n "$val" ]]; then
+            # Compare using awk since bash can't do float comparisons
+            if awk "BEGIN{exit !($val > 0.5)}"; then
+                ISSUES+=("$name stage is slow (${val}s) — investigate callbacks in this stage")
+            elif awk "BEGIN{exit !($val > 0.2)}"; then
+                ISSUES+=("$name stage took ${val}s — worth reviewing")
+            else
+                WINS+=("$name stage looks healthy (${val}s)")
+            fi
+        fi
+    }
+    check_stage "bootstrap"  "$BOOTSTRAP_T"
+    check_stage "main_query" "$MAINQUERY_T"
+    check_stage "template"   "$TEMPLATE_T"
+fi
+
+# Count spotlight hooks (slow hooks ≥1ms) — fewer is better
+if [[ -n "${SPOTLIGHT_OUT:-}" && "$SPOTLIGHT_OUT" != *"Error"* ]]; then
+    SLOW_COUNT=$(echo "$SPOTLIGHT_OUT" | grep -c '^| ' || true)
+    if [[ "$SLOW_COUNT" -eq 0 ]]; then
+        WINS+=("No hooks exceeded 1ms — excellent hook performance")
+    elif [[ "$SLOW_COUNT" -le 5 ]]; then
+        WINS+=("Only ${SLOW_COUNT} hook(s) exceeded 1ms — generally healthy")
+    elif [[ "$SLOW_COUNT" -le 15 ]]; then
+        ISSUES+=("${SLOW_COUNT} hooks exceeded 1ms — review spotlight output above")
+    else
+        ISSUES+=("${SLOW_COUNT} hooks exceeded 1ms — significant hook overhead detected")
+    fi
+
+    # Surface the single slowest hook by name
+    SLOWEST_HOOK=$(echo "$SPOTLIGHT_OUT" | grep '^| ' | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$2); print $2}')
+    SLOWEST_TIME=$(echo "$SPOTLIGHT_OUT" | grep '^| ' | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+    if [[ -n "$SLOWEST_HOOK" && -n "$SLOWEST_TIME" ]]; then
+        ISSUES+=("Slowest hook: '$SLOWEST_HOOK' at ${SLOWEST_TIME}s — investigate callbacks on this hook")
+    fi
+fi
+
+# Hook count — very high total hook count can indicate bloat
+if [[ -n "${HOOK_ALL_COUNT:-}" ]]; then
+    if [[ "$HOOK_ALL_COUNT" -gt 200 ]]; then
+        ISSUES+=("High hook count (${HOOK_ALL_COUNT}) — may indicate plugin or theme bloat")
+    elif [[ "$HOOK_ALL_COUNT" -gt 100 ]]; then
+        ISSUES+=("Elevated hook count (${HOOK_ALL_COUNT}) — worth noting")
+    else
+        WINS+=("Hook count looks reasonable (${HOOK_ALL_COUNT})")
+    fi
+fi
+
+# Output positives
+if [[ ${#WINS[@]} -gt 0 ]]; then
+    echo -e "  ${GRN}${BLD}✓ Positives:${RST}"
+    for w in "${WINS[@]}"; do
+        echo -e "  ${GRN}✓ $w${RST}"
+    done
+    echo ""
+fi
+
+# Output issues
+if [[ ${#ISSUES[@]} -gt 0 ]]; then
+    echo -e "  ${YLW}${BLD}⚠ Issues/Recommendations:${RST}"
+    for i in "${ISSUES[@]}"; do
+        echo -e "  ${YLW}⚠ $i${RST}"
+    done
+    echo ""
+fi
+
 echo -e "  ${BLD}What to look for in the output above:${RST}"
 echo ""
 echo "  Stage breakdown (Section 5):"
@@ -266,16 +349,13 @@ echo ""
 echo -e "  ${BLD}Useful follow-up commands:${RST}"
 echo ""
 echo "    # Profile a specific hook in detail:"
-echo "    wp profile hook init --orderby=time"
+echo "    wp --no-color profile hook init --orderby=time"
 echo ""
 echo "    # Profile with a specific URL (useful for page-specific slowness):"
-echo "    wp profile stage --all --url=https://example.com/slow-page/"
+echo "    wp --no-color profile stage --all --url=https://example.com/slow-page/"
 echo ""
 echo "    # Profile the template stage specifically:"
-echo "    wp profile hook template_redirect --orderby=time"
-echo ""
-echo "    # Uninstall profile command when done:"
-echo "    wp package remove wp-cli/profile-command"
+echo "    wp --no-color profile hook template_redirect --orderby=time"
 echo ""
 row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
