@@ -61,11 +61,11 @@ $GLOBALS['is_cli'] = $is_cli;
 function section(string $title): void {
     $is_cli = $GLOBALS['is_cli'];
     $bar = str_repeat('─', 60);
-    // Pink (#b61d6f) for titles, dark (#3b4956) for dividers
+    // Pink (#b61d6f) for dividers, white for title
     $GLOBALS['out'][] = '';
-    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m$bar\033[0m" : $bar;
-    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  $title\033[0m" : "  $title";
-    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;59;73;86m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;255;255;255m  $title\033[0m" : "  $title";
+    $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m$bar\033[0m" : $bar;
     $GLOBALS['out'][] = '';
 }
 
@@ -75,10 +75,8 @@ function row(string $label, $value, string $status = ''): void {
     $color = $statusColors[$status] ?? '0';
     $badge = $status ? "[$status]" : '';
     if ($is_cli) {
-        // Label: soft grey (#8892a0), value: default white, badge: status colour
-        $styledLabel = "\033[38;2;136;146;160m$label\033[0m";
         $badge = $status ? "\033[1;{$color}m$badge\033[0m" : '';
-        $line = sprintf("  %-58s %s %s", $styledLabel, $value, $badge);
+        $line = sprintf("  %-35s %s %s", $label, $value, $badge);
     } else {
         $line = sprintf("  %-35s %s %s", $label, $value, $badge);
     }
