@@ -44,6 +44,10 @@ die() {
 
 # ── Header ────────────────────────────────────────────────────
 SITE_URL="$(wp option get siteurl --quiet 2>/dev/null || echo 'unknown')"
+SITE_HOST="$(echo "$SITE_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')"
+REPORT_FILENAME="wp-profile-diag-$(date -u '+%Y-%m-%d-%H%M%S')-${SITE_HOST}.txt"
+REPORT_TMPFILE="$(mktemp)"
+exec > >(tee "$REPORT_TMPFILE") 2>&1
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
@@ -358,3 +362,9 @@ echo "    wp --no-color profile hook template_redirect --orderby=time"
 echo ""
 row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
+
+# ── Save report ───────────────────────────────────────────────
+sleep 0.2
+sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
+rm -f "$REPORT_TMPFILE"
+printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME" > /dev/tty

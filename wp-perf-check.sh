@@ -58,6 +58,11 @@ require() {
     return 0
 }
 
+# ── File output setup ────────────────────────────────────────
+REPORT_FILENAME="wp-perf-check-$(date -u '+%Y-%m-%d-%H%M%S')-${DOMAIN}.txt"
+REPORT_TMPFILE="$(mktemp)"
+exec > >(tee "$REPORT_TMPFILE") 2>&1
+
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
@@ -821,3 +826,10 @@ echo "    • Review PageSpeed Insights for full Core Web Vitals data"
 echo ""
 row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
+
+# ── Save report ───────────────────────────────────────────────
+# Give the tee process a moment to flush, then strip ANSI and write the clean file
+sleep 0.2
+sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
+rm -f "$REPORT_TMPFILE"
+printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME" > /dev/tty

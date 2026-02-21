@@ -448,15 +448,18 @@ row('Batcache (advanced-cache.php)', $is_batcache ? 'Present' : ($batcache_activ
     $is_batcache ? 'OK' : 'INFO');
 
 // Check for Batcache customisations (max_age, seconds, times)
-// Pressable's recommended snippet sets these in wp-config.php via a global $batcache
+// The $batcache global is consumed by advanced-cache.php during early bootstrap,
+// so by the time wp eval-file runs the global is no longer reliable.
+// Instead, parse wp-config.php directly for the customisation snippet.
 if ($is_batcache) {
-    global $batcache;
-    $bc_max_age  = is_object($batcache) ? ($batcache->max_age  ?? null)
-                 : (is_array($batcache)  ? ($batcache['max_age']  ?? null) : null);
-    $bc_seconds  = is_object($batcache) ? ($batcache->seconds  ?? null)
-                 : (is_array($batcache)  ? ($batcache['seconds']  ?? null) : null);
-    $bc_times    = is_object($batcache) ? ($batcache->times    ?? null)
-                 : (is_array($batcache)  ? ($batcache['times']    ?? null) : null);
+    $bc_max_age = $bc_seconds = $bc_times = null;
+    $wp_config_src = file_exists(ABSPATH . 'wp-config.php')
+        ? file_get_contents(ABSPATH . 'wp-config.php') : '';
+    if ($wp_config_src) {
+        if (preg_match('/max_age\s*[=\[\']+\s*["\']?(\d+)/', $wp_config_src, $m)) $bc_max_age = (int)$m[1];
+        if (preg_match('/\bseconds\s*[=\[\']+\s*["\']?(\d+)/',  $wp_config_src, $m)) $bc_seconds = (int)$m[1];
+        if (preg_match('/\btimes\s*[=\[\']+\s*["\']?(\d+)/',    $wp_config_src, $m)) $bc_times   = (int)$m[1];
+    }
     $bc_customised = ($bc_max_age !== null || $bc_seconds !== null || $bc_times !== null);
     if ($bc_customised) {
         $bc_parts = [];
@@ -968,6 +971,7 @@ section('8. HTTP SELF-CHECK (TTFB & CACHE HEADERS)');
 $home_url = get_home_url();
 note("Making HTTP request to: $home_url");
 note("This checks cache headers, TTFB, and edge caching signals.");
+$GLOBALS['out'][] = '';
 
 // Initialise cache-header vars — populated inside the response block, read in summary.
 $x_nananana  = null; // from 1st request (no-cache)
@@ -1777,11 +1781,6 @@ if ($issues) {
     good('  No major issues detected!');
 }
 
-$GLOBALS['out'][] = '';
-$footer_style = $is_cli ? "\033[3;38;2;136;146;160m" : '';
-$footer_reset  = $is_cli ? "\033[0m" : '';
-$GLOBALS['out'][] = $footer_style . '  Generated: ' . date('Y-m-d H:i:s T') . $footer_reset;
-$GLOBALS['out'][] = $footer_style . '  Site: ' . get_site_url() . $footer_reset;
 $GLOBALS['out'][] = '';
 
 // ── Output ────────────────────────────────────────────────────
