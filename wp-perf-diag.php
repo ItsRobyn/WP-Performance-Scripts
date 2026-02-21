@@ -1029,7 +1029,7 @@ $wp_config_checks = [
     'WP_DEBUG'              => [false, 'Should be false in production'],
     'WP_DEBUG_DISPLAY'      => [false, 'Should be false in production'],
     'EMPTY_TRASH_DAYS'      => [null,  'Consider setting (default 30)'],
-    'WP_POST_REVISIONS'     => [null,  'Consider limiting (e.g. 5)'],
+    'WP_POST_REVISIONS'     => [null,  'Consider limiting (e.g. 5-10)'],
     'DISABLE_WP_CRON'       => [true,  'Consider using server cron instead'],
     'COMPRESS_SCRIPTS'      => [true,  'Enables JS compression'],
     'COMPRESS_CSS'          => [true,  'Enables CSS compression'],
@@ -1182,10 +1182,12 @@ section('11. WORDPRESS SITE HEALTH');
 // ── Post & page counts ───────────────────────────────────────
 $post_types = get_post_types(['public' => true], 'objects');
 heading('Published content counts:');
+$total_published_content = 0;
 foreach ($post_types as $pt) {
     $counts = wp_count_posts($pt->name);
     $published = (int)($counts->publish ?? 0);
     if ($published === 0) continue; // skip empty post types
+    if ($pt->name !== 'attachment') $total_published_content += $published;
     $flag = ($published > 5000 && !in_array($pt->name, ['post', 'page', 'attachment']))
         ? 'WARN' : 'OK';
     row('  ' . $pt->label . ' (' . $pt->name . ')', number_format($published) . ' published', $flag);
@@ -1459,16 +1461,6 @@ row('Loopback (admin-ajax)', $lb_ok ? 'OK' : (is_wp_error($loopback) ? $loopback
     $lb_ok ? 'OK' : 'WARN');
 
 // ─────────────────────────────────────────────────────────────
-// 14. RESOURCE USAGE (this script execution)
-// ─────────────────────────────────────────────────────────────
-section('14. RESOURCE USAGE (this script)');
-
-$elapsed_total = microtime(true) - WP_PERF_DIAG_START;
-row('Script execution time', ms($elapsed_total));
-row('Peak memory usage',     bytes(memory_get_peak_usage(true)));
-row('Memory at end',         bytes(memory_get_usage(true)));
-
-// ─────────────────────────────────────────────────────────────
 // SUMMARY
 // ─────────────────────────────────────────────────────────────
 section('SUMMARY & RECOMMENDATIONS');
@@ -1510,6 +1502,17 @@ elseif ($x_ac === null && $x_ac2 === null)
 if ($autoload_kb > 200)          $issues[] = "Autoloaded options are large ({$autoload_kb} KB) — audit with Query Monitor";
 if ((int)$expired_transients > 100) $issues[] = "Many expired transients ({$expired_transients}) — run WP-CLI: wp transient delete --expired";
 if ((int)$revision_count > 500)  $issues[] = "High revision count ({$revision_count}) — set WP_POST_REVISIONS in wp-config.php";
+// Recommend limiting revisions if a page builder is active or total content is high
+$has_builder_early = !empty(array_filter($found_perf_plugins, fn($p) => $p[1] === 'builder'));
+$high_content_count = ($total_published_content ?? 0) >= 500;
+if (!defined('WP_POST_REVISIONS') || WP_POST_REVISIONS === true || (is_int(WP_POST_REVISIONS) && WP_POST_REVISIONS > 10)) {
+    if ($has_builder_early || $high_content_count) {
+        $rev_reasons = [];
+        if ($has_builder_early)  $rev_reasons[] = 'page builder detected';
+        if ($high_content_count) $rev_reasons[] = number_format($total_published_content) . ' published posts/pages';
+        $issues[] = 'Consider setting WP_POST_REVISIONS to 5–10 (' . implode(', ', $rev_reasons) . ') — revisions can accumulate quickly and bloat the database';
+    }
+}
 if ((int)$spam_comments > 500)   $issues[] = "High spam comment count — empty spam from Dashboard > Comments";
 if (!(defined('DISABLE_WP_CRON') && DISABLE_WP_CRON)) $issues[] = 'WP-Cron runs on HTTP requests — consider DISABLE_WP_CRON with server cron';
 if (defined('WP_DEBUG') && WP_DEBUG) $issues[] = 'WP_DEBUG is ON in production';
