@@ -26,7 +26,7 @@ BLD='\033[1m';    RST='\033[0m'
 BAR="$(printf '─%.0s' {1..64})"
 
 # ── Helpers ───────────────────────────────────────────────────
-section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}"; }
+section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}\n"; }
 good()    { echo -e "  ${GRN}✓ $1${RST}"; }
 warn()    { echo -e "  ${YLW}⚠ $1${RST}"; }
 bad()     { echo -e "  ${RED}✗ $1${RST}"; }
@@ -69,14 +69,6 @@ fi
 WP_VER=$(wp --version 2>/dev/null | head -1 || echo 'unknown')
 good "WP-CLI found: $WP_VER"
 
-# Check we're in a WordPress root
-if [[ ! -f "wp-config.php" && ! -f "../wp-config.php" ]]; then
-    warn "wp-config.php not found in current or parent directory"
-    note "Run this script from your WordPress site root (htdocs / public_html)"
-    note "Continuing anyway — wp commands may fail if WP root can't be detected"
-else
-    good "WordPress root detected"
-fi
 
 # ── Environment setup ─────────────────────────────────────────
 section "2. ENVIRONMENT SETUP"
@@ -185,10 +177,17 @@ note "Stages: bootstrap → main_query → template"
 echo ""
 
 # Run stage profile — allow it to fail gracefully
-if ! wp --no-color profile stage --all --orderby=time 2>&1; then
+STAGE_OUT=$(wp --no-color profile stage --all --orderby=time 2>&1) || true
+if [[ -z "$STAGE_OUT" || "$STAGE_OUT" == *"Error"* ]]; then
     warn "wp profile stage failed — site may not be reachable via loopback"
     note "Ensure the site URL is correct in wp-config.php / WP settings"
     note "Some managed hosts block loopback requests"
+    echo "$STAGE_OUT"
+else
+    echo "$STAGE_OUT"
+    STAGE_COUNT=$(echo "$STAGE_OUT" | grep -c '^| ' || true)
+    echo ""
+    note "Total stages shown: ${STAGE_COUNT}"
 fi
 
 # ── Hook-level breakdown ──────────────────────────────────────
@@ -197,9 +196,16 @@ section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
 note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
 echo ""
 
-if ! wp --no-color profile hook --all --orderby=time 2>&1; then
+HOOK_ALL_OUT=$(wp --no-color profile hook --all --orderby=time 2>&1) || true
+if [[ -z "$HOOK_ALL_OUT" || "$HOOK_ALL_OUT" == *"Error"* ]]; then
     warn "wp profile hook failed"
     note "This requires a working loopback HTTP connection"
+    echo "$HOOK_ALL_OUT"
+else
+    echo "$HOOK_ALL_OUT"
+    HOOK_ALL_COUNT=$(echo "$HOOK_ALL_OUT" | grep -c '^| ' || true)
+    echo ""
+    note "Total hooks shown: ${HOOK_ALL_COUNT}"
 fi
 
 # ── Spotlight — slow hooks only ───────────────────────────────
@@ -208,8 +214,15 @@ section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
 note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
 echo ""
 
-if ! wp --no-color profile hook --all --spotlight --orderby=time 2>&1; then
+SPOTLIGHT_OUT=$(wp --no-color profile hook --all --spotlight --orderby=time 2>&1) || true
+if [[ -z "$SPOTLIGHT_OUT" || "$SPOTLIGHT_OUT" == *"Error"* ]]; then
     warn "wp profile hook --spotlight failed"
+    echo "$SPOTLIGHT_OUT"
+else
+    echo "$SPOTLIGHT_OUT"
+    SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_OUT" | grep -c '^| ' || true)
+    echo ""
+    note "Total slow hooks shown: ${SPOTLIGHT_COUNT}"
 fi
 
 # ── Hook breakdown for wp (main query) stage ─────────────────
@@ -218,9 +231,16 @@ section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
 note "Profiling hooks during the main query stage..."
 echo ""
 
-if ! wp --no-color profile hook wp --orderby=time 2>&1; then
+HOOK_WP_OUT=$(wp --no-color profile hook wp --orderby=time 2>&1) || true
+if [[ -z "$HOOK_WP_OUT" || "$HOOK_WP_OUT" == *"Error"* ]]; then
     warn "wp profile hook wp failed"
     note "The 'wp' stage runs after query vars are set — usually where template logic fires"
+    echo "$HOOK_WP_OUT"
+else
+    echo "$HOOK_WP_OUT"
+    HOOK_WP_COUNT=$(echo "$HOOK_WP_OUT" | grep -c '^| ' || true)
+    echo ""
+    note "Total hooks shown: ${HOOK_WP_COUNT}"
 fi
 
 # ── Summary ───────────────────────────────────────────────────
