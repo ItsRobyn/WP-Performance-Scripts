@@ -61,18 +61,20 @@ require() {
 # ── File output setup ────────────────────────────────────────
 REPORT_FILENAME="wp-perf-check-$(date -u '+%Y-%m-%d-%H%M%S')-${DOMAIN}.txt"
 REPORT_TMPFILE="$(mktemp)"
-exec > >(tee "$REPORT_TMPFILE") 2>&1
+set +o pipefail
+exec > >(tee -i "$REPORT_TMPFILE") 2>&1
+set -o pipefail
 
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}          WP External Performance Diagnostics             ${PRI}│"
 echo -e "  │${SEC}                  wp-perf-check.sh                        ${PRI}│"
+echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
-echo -e "  ${SEC}By Robyn × Claude AI${RST}"
 echo ""
-row "Generated"   "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-row "Site"        "$TARGET_URL"
+printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+printf "  ${BLD}%-20s${RST} %s\n" "Site" "$TARGET_URL"
 
 # ─────────────────────────────────────────────────────────────
 # 1. DNS RESOLUTION

@@ -47,16 +47,18 @@ SITE_URL="$(wp option get siteurl --quiet 2>/dev/null || echo 'unknown')"
 SITE_HOST="$(echo "$SITE_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')"
 REPORT_FILENAME="wp-profile-diag-$(date -u '+%Y-%m-%d-%H%M%S')-${SITE_HOST}.txt"
 REPORT_TMPFILE="$(mktemp)"
-exec > >(tee "$REPORT_TMPFILE") 2>&1
+set +o pipefail
+exec > >(tee -i "$REPORT_TMPFILE") 2>&1
+set -o pipefail
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
 echo -e "  │${SEC}                 wp-profile-diag.sh                       ${PRI}│"
+echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
-echo -e "  ${SEC}By Robyn × Claude AI${RST}"
 echo ""
-row "Generated"  "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-row "Site"       "$SITE_URL"
+printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+printf "  ${BLD}%-20s${RST} %s\n" "Site" "$SITE_URL"
 
 # ── Preflight checks ──────────────────────────────────────────
 section "1. PREFLIGHT CHECKS"

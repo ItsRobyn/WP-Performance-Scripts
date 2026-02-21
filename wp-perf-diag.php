@@ -138,8 +138,9 @@ $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('wp-perf-diag.php')    
 $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('By Robyn × Claude AI')       . $pri . '│' . $rst;
 $GLOBALS['out'][] = $pri . '  └──────────────────────────────────────────────────────────┘' . $rst;
 $GLOBALS['out'][] = '';
-row('Generated', gmdate('Y-m-d H:i:s') . ' UTC');
-row('Site',      get_home_url());
+$bld = $is_cli ? "\033[1m" : '';
+$GLOBALS['out'][] = sprintf("  %s%-20s%s %s", $bld, 'Generated', $rst, gmdate('Y-m-d H:i:s') . ' UTC');
+$GLOBALS['out'][] = sprintf("  %s%-20s%s %s", $bld, 'Site',      $rst, get_home_url());
 
 // ─────────────────────────────────────────────────────────────
 // 1. ENVIRONMENT
