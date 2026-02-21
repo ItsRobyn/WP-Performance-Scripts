@@ -525,70 +525,153 @@ if ($plugins_needing_update > 0 && isset($update_transient->response)) {
     $GLOBALS['out'][] = '';
 }
 
-// Flag known performance-impactful plugins
-$perf_plugins = [
-    // Good/caching
-    'w3-total-cache/w3-total-cache.php'           => ['W3 Total Cache', 'cache'],
-    'wp-super-cache/wp-cache.php'                 => ['WP Super Cache', 'cache'],
-    'litespeed-cache/litespeed-cache.php'         => ['LiteSpeed Cache', 'cache'],
-    'wp-rocket/wp-rocket.php'                     => ['WP Rocket', 'cache'],
-    'wp-fastest-cache/wpFastestCache.php'         => ['WP Fastest Cache', 'cache'],
-    'redis-cache/redis-cache.php'                 => ['Redis Object Cache', 'cache'],
-    'memcached-redux/memcached.php'               => ['Memcached Redux', 'cache'],
-    // Monitoring
-    'query-monitor/query-monitor.php'             => ['Query Monitor', 'debug'],
-    'debug-bar/debug-bar.php'                     => ['Debug Bar', 'debug'],
-    'new-relic-browser/new-relic-browser.php'     => ['New Relic', 'monitoring'],
-    // Potentially heavy
-    'woocommerce/woocommerce.php'                 => ['WooCommerce', 'ecommerce'],
-    'elementor/elementor.php'                     => ['Elementor', 'builder'],
-    'js_composer/js_composer.php'                 => ['WPBakery', 'builder'],
-    'gravityforms/gravityforms.php'               => ['Gravity Forms', 'forms'],
-    'really-simple-ssl/rlrsssl-really-simple-ssl.php' => ['Really Simple SSL', 'ssl'],
-    'wordfence/wordfence.php'                     => ['Wordfence', 'security'],
-    'all-in-one-wp-security-and-firewall/wp-security.php' => ['AIO Security', 'security'],
-    // SEO
-    'wordpress-seo/wp-seo.php'                   => ['Yoast SEO', 'seo'],
-    'seo-by-rank-math/rank-math.php'              => ['Rank Math SEO', 'seo'],
-    'google-site-kit/google-site-kit.php'         => ['Site Kit by Google', 'analytics'],
-    // Page builders / addons
-    'ultimate-elementor/ultimate-elementor.php'   => ['Ultimate Addons for Elementor', 'builder'],
-    'essential-addons-for-elementor-lite/essential_adons_for_elementor.php' => ['Essential Addons for Elementor', 'builder'],
-    'beaver-builder-lite-version/fl-builder.php'  => ['Beaver Builder', 'builder'],
-    'divi-builder/divi-builder.php'               => ['Divi Builder', 'builder'],
-    // Forms
-    'contact-form-7/wp-contact-form-7.php'        => ['Contact Form 7', 'forms'],
-    'ninja-forms/ninja-forms.php'                 => ['Ninja Forms', 'forms'],
-    // WooCommerce
-    'woocommerce/woocommerce.php'                 => ['WooCommerce', 'ecommerce'],
-    // Other heavy hitters
-    'the-events-calendar/the-events-calendar.php' => ['The Events Calendar', 'heavy'],
-    'bbpress/bbpress.php'                         => ['bbPress', 'heavy'],
-    'buddypress/bp-loader.php'                    => ['BuddyPress', 'heavy'],
-];
-
-$found_perf_plugins = [];
-foreach ($perf_plugins as $slug => $info) {
-    // Match on exact slug OR by directory prefix (handles version suffixes in filenames)
-    $dir = dirname($slug);
-    $matched = in_array($slug, $active_plugins);
-    if (!$matched) {
-        foreach ($active_plugins as $ap) {
-            if (dirname($ap) === $dir) {
-                $matched = true;
-                break;
-            }
+// ── Disallowed plugins (read dynamically from platform mu-plugin) ────────────
+// atomic-platform.php lives in the mu-plugins directory on Pressable servers and
+// maintains the canonical list of plugins that cannot be activated on the platform.
+// We parse it at runtime so the list is always up to date without hardcoding here.
+$disallowed_plugins = [];
+$atomic_platform_file = WPMU_PLUGIN_DIR . '/atomic-platform.php';
+if (file_exists($atomic_platform_file)) {
+    $atomic_src = file_get_contents($atomic_platform_file);
+    // Extract the $disallowed_plugins array block via regex — captures slug => 'reason' pairs
+    if (preg_match('/\$disallowed_plugins\s*=\s*\[(.+?)\];/s', $atomic_src, $m)) {
+        preg_match_all("/'([^']+\/[^']+\.php)'\s*=>\s*'([^']+)'/", $m[1], $pairs, PREG_SET_ORDER);
+        foreach ($pairs as $pair) {
+            $disallowed_plugins[$pair[1]] = $pair[2];
         }
-    }
-    if ($matched) {
-        $found_perf_plugins[] = $info;
     }
 }
 
+// Flag known performance-impactful plugins.
+// Types:
+//   cache-incompatible  — pure caching plugins; conflict with platform's native Batcache layer
+//   cache-optimiser     — broader optimisation suites that may include caching; worth checking for interference
+//   object-cache        — object cache backends (Redis/Memcached); fine on this platform
+//   debug               — diagnostic plugins that should be inactive in production
+//   monitoring          — APM/monitoring agents
+//   ssl-unnecessary     — SSL plugins; SSL is handled by the platform
+//   builder             — page builders (drives OPcache + revision recommendations)
+//   ecommerce           — WooCommerce (triggers dedicated section)
+//   forms               — form plugins with notable DB overhead
+//   security            — security/firewall plugins (can be resource-heavy)
+//   seo                 — SEO plugins
+//   analytics           — analytics/tracking plugins
+//   heavy               — other plugins with notable resource overhead
+$perf_plugins = [
+    // Caching — incompatible with platform-level Batcache
+    'w3-total-cache/w3-total-cache.php'           => ['W3 Total Cache',    'cache-incompatible'],
+    'wp-super-cache/wp-cache.php'                 => ['WP Super Cache',    'cache-incompatible'],
+    'wp-fastest-cache/wpFastestCache.php'         => ['WP Fastest Cache',  'cache-incompatible'],
+    'litespeed-cache/litespeed-cache.php'         => ['LiteSpeed Cache',   'cache-incompatible'],
+    // Optimisation suites — include caching but offer broader features; check for interference
+    'wp-rocket/wp-rocket.php'                     => ['WP Rocket',         'cache-optimiser'],
+    // Object cache backends — fine on this platform
+    'redis-cache/redis-cache.php'                 => ['Redis Object Cache', 'object-cache'],
+    'memcached-redux/memcached.php'               => ['Memcached Redux',   'object-cache'],
+    // SSL — handled by platform
+    'really-simple-ssl/rlrsssl-really-simple-ssl.php' => ['Really Simple SSL', 'ssl-unnecessary'],
+    // Debug — should not be active in production
+    'query-monitor/query-monitor.php'             => ['Query Monitor',     'debug'],
+    'debug-bar/debug-bar.php'                     => ['Debug Bar',         'debug'],
+    // Monitoring
+    'new-relic-browser/new-relic-browser.php'     => ['New Relic',         'monitoring'],
+    // Page builders / addons
+    'elementor/elementor.php'                     => ['Elementor',         'builder'],
+    'js_composer/js_composer.php'                 => ['WPBakery',          'builder'],
+    'ultimate-elementor/ultimate-elementor.php'   => ['Ultimate Addons for Elementor', 'builder'],
+    'essential-addons-for-elementor-lite/essential_adons_for_elementor.php' => ['Essential Addons for Elementor', 'builder'],
+    'beaver-builder-lite-version/fl-builder.php'  => ['Beaver Builder',    'builder'],
+    'divi-builder/divi-builder.php'               => ['Divi Builder',      'builder'],
+    // Ecommerce
+    'woocommerce/woocommerce.php'                 => ['WooCommerce',       'ecommerce'],
+    // Forms
+    'gravityforms/gravityforms.php'               => ['Gravity Forms',     'forms'],
+    'contact-form-7/wp-contact-form-7.php'        => ['Contact Form 7',    'forms'],
+    'ninja-forms/ninja-forms.php'                 => ['Ninja Forms',       'forms'],
+    // Security
+    'wordfence/wordfence.php'                     => ['Wordfence',         'security'],
+    'all-in-one-wp-security-and-firewall/wp-security.php' => ['AIO Security', 'security'],
+    // SEO
+    'wordpress-seo/wp-seo.php'                   => ['Yoast SEO',         'seo'],
+    'seo-by-rank-math/rank-math.php'             => ['Rank Math SEO',     'seo'],
+    // Analytics
+    'google-site-kit/google-site-kit.php'         => ['Site Kit by Google', 'analytics'],
+    // Heavy hitters
+    'the-events-calendar/the-events-calendar.php' => ['The Events Calendar', 'heavy'],
+    'bbpress/bbpress.php'                         => ['bbPress',           'heavy'],
+    'buddypress/bp-loader.php'                    => ['BuddyPress',        'heavy'],
+];
+
+// Helper: match a slug against the active plugin list (exact or by directory prefix)
+$plugin_is_active = function(string $slug) use ($active_plugins): bool {
+    if (in_array($slug, $active_plugins)) return true;
+    $dir = dirname($slug);
+    foreach ($active_plugins as $ap) {
+        if (dirname($ap) === $dir) return true;
+    }
+    return false;
+};
+
+// Also check all_plugins (installed but not necessarily active) for disallowed check
+$plugin_is_installed = function(string $slug) use ($all_plugins): bool {
+    if (isset($all_plugins[$slug])) return true;
+    $dir = dirname($slug);
+    foreach (array_keys($all_plugins) as $p) {
+        if (dirname($p) === $dir) return true;
+    }
+    return false;
+};
+
+$found_perf_plugins = [];
+foreach ($perf_plugins as $slug => $info) {
+    if ($plugin_is_active($slug)) {
+        $found_perf_plugins[$slug] = $info;
+    }
+}
+
+// ── Disallowed plugin check ──────────────────────────────────
+$found_disallowed = [];
+foreach ($disallowed_plugins as $slug => $reason) {
+    if ($plugin_is_installed($slug)) {
+        $name = $all_plugins[$slug]['Name'] ?? dirname($slug);
+        $found_disallowed[$slug] = ['name' => $name, 'reason' => $reason];
+    }
+}
+
+// ── Display: disallowed plugins ──────────────────────────────
+if ($found_disallowed) {
+    heading('Disallowed plugins found (cannot be activated on this platform):');
+    foreach ($found_disallowed as $slug => $info) {
+        row('  ' . $info['name'], 'DISALLOWED', 'BAD');
+        note($info['reason']);
+    }
+}
+
+// ── Display: notable active plugins ─────────────────────────
 if ($found_perf_plugins) {
     heading('Notable active plugins:');
-    foreach ($found_perf_plugins as $p) {
-        row('  ' . $p[0], '[' . $p[1] . ']');
+    foreach ($found_perf_plugins as $slug => $p) {
+        [$name, $type] = $p;
+        switch ($type) {
+            case 'cache-incompatible':
+                row('  ' . $name, 'caching plugin — incompatible with platform caching, should be removed', 'BAD');
+                break;
+            case 'cache-optimiser':
+                row('  ' . $name, 'optimisation suite — verify caching features aren\'t conflicting with Batcache', 'WARN');
+                break;
+            case 'ssl-unnecessary':
+                row('  ' . $name, 'SSL is handled by the platform — this plugin is unnecessary', 'WARN');
+                break;
+            case 'debug':
+                row('  ' . $name, 'diagnostic plugin — should be deactivated in production', 'WARN');
+                break;
+            case 'object-cache':
+                row('  ' . $name, '[object-cache]');
+                break;
+            default:
+                row('  ' . $name, '[' . $type . ']');
+                break;
+        }
     }
 }
 
