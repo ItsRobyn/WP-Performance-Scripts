@@ -168,6 +168,9 @@ if ! wp --no-color help profile &>/dev/null 2>&1; then
 fi
 good "wp profile command is available"
 
+# Initialise analysis vars — populated by capture runs after each display run
+STAGE_DATA=""; HOOK_ALL_COUNT=0; SPOTLIGHT_DATA=""; HOOK_WP_COUNT=0
+
 # ── Run profile ───────────────────────────────────────────────
 section "5. WP PROFILE — STAGE BREAKDOWN"
 
@@ -175,18 +178,17 @@ note "Profiling WordPress load stages (this makes a real request)..."
 note "Stages: bootstrap → main_query → template"
 echo ""
 
-# Run stage profile — allow it to fail gracefully
-STAGE_OUT=$(wp --no-color profile stage --all --orderby=time 2>&1) || true
-if [[ -z "$STAGE_OUT" || "$STAGE_OUT" == *"Error"* ]]; then
+# Run directly so wp-cli renders its own table formatting to the terminal
+if wp --no-color profile stage --all --orderby=time; then
+    # Capture separately (quiet) just for analysis — table chars intact
+    STAGE_DATA=$(wp --no-color profile stage --all --orderby=time 2>/dev/null) || true
+    STAGE_COUNT=$(echo "$STAGE_DATA" | grep -c '^| ' || true)
+    echo ""
+    note "Total stages shown: ${STAGE_COUNT}"
+else
     warn "wp profile stage failed — site may not be reachable via loopback"
     note "Ensure the site URL is correct in wp-config.php / WP settings"
     note "Some managed hosts block loopback requests"
-    echo "$STAGE_OUT"
-else
-    echo "$STAGE_OUT"
-    STAGE_COUNT=$(echo "$STAGE_OUT" | grep -c '^| ' || true)
-    echo ""
-    note "Total stages shown: ${STAGE_COUNT}"
 fi
 
 # ── Hook-level breakdown ──────────────────────────────────────
@@ -195,16 +197,14 @@ section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
 note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
 echo ""
 
-HOOK_ALL_OUT=$(wp --no-color profile hook --all --orderby=time 2>&1) || true
-if [[ -z "$HOOK_ALL_OUT" || "$HOOK_ALL_OUT" == *"Error"* ]]; then
-    warn "wp profile hook failed"
-    note "This requires a working loopback HTTP connection"
-    echo "$HOOK_ALL_OUT"
-else
-    echo "$HOOK_ALL_OUT"
-    HOOK_ALL_COUNT=$(echo "$HOOK_ALL_OUT" | grep -c '^| ' || true)
+if wp --no-color profile hook --all --orderby=time; then
+    HOOK_ALL_DATA=$(wp --no-color profile hook --all --orderby=time 2>/dev/null) || true
+    HOOK_ALL_COUNT=$(echo "$HOOK_ALL_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total hooks shown: ${HOOK_ALL_COUNT}"
+else
+    warn "wp profile hook failed"
+    note "This requires a working loopback HTTP connection"
 fi
 
 # ── Spotlight — slow hooks only ───────────────────────────────
@@ -213,15 +213,13 @@ section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
 note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
 echo ""
 
-SPOTLIGHT_OUT=$(wp --no-color profile hook --all --spotlight --orderby=time 2>&1) || true
-if [[ -z "$SPOTLIGHT_OUT" || "$SPOTLIGHT_OUT" == *"Error"* ]]; then
-    warn "wp profile hook --spotlight failed"
-    echo "$SPOTLIGHT_OUT"
-else
-    echo "$SPOTLIGHT_OUT"
-    SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_OUT" | grep -c '^| ' || true)
+if wp --no-color profile hook --all --spotlight --orderby=time; then
+    SPOTLIGHT_DATA=$(wp --no-color profile hook --all --spotlight --orderby=time 2>/dev/null) || true
+    SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total slow hooks shown: ${SPOTLIGHT_COUNT}"
+else
+    warn "wp profile hook --spotlight failed"
 fi
 
 # ── Hook breakdown for wp (main query) stage ─────────────────
@@ -230,16 +228,14 @@ section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
 note "Profiling hooks during the main query stage..."
 echo ""
 
-HOOK_WP_OUT=$(wp --no-color profile hook wp --orderby=time 2>&1) || true
-if [[ -z "$HOOK_WP_OUT" || "$HOOK_WP_OUT" == *"Error"* ]]; then
-    warn "wp profile hook wp failed"
-    note "The 'wp' stage runs after query vars are set — usually where template logic fires"
-    echo "$HOOK_WP_OUT"
-else
-    echo "$HOOK_WP_OUT"
-    HOOK_WP_COUNT=$(echo "$HOOK_WP_OUT" | grep -c '^| ' || true)
+if wp --no-color profile hook wp --orderby=time; then
+    HOOK_WP_DATA=$(wp --no-color profile hook wp --orderby=time 2>/dev/null) || true
+    HOOK_WP_COUNT=$(echo "$HOOK_WP_DATA" | grep -c '^| ' || true)
     echo ""
     note "Total hooks shown: ${HOOK_WP_COUNT}"
+else
+    warn "wp profile hook wp failed"
+    note "The 'wp' stage runs after query vars are set — usually where template logic fires"
 fi
 
 # ── Summary ───────────────────────────────────────────────────
@@ -256,10 +252,10 @@ parse_stage_time() {
     echo "$output" | grep "| $stage " | awk -F'|' '{gsub(/ /,"",$3); print $3}' | head -1
 }
 
-if [[ -n "${STAGE_OUT:-}" && "$STAGE_OUT" != *"Error"* ]]; then
-    BOOTSTRAP_T=$(parse_stage_time "bootstrap"  "$STAGE_OUT")
-    MAINQUERY_T=$(parse_stage_time "main_query" "$STAGE_OUT")
-    TEMPLATE_T=$(parse_stage_time  "template"   "$STAGE_OUT")
+if [[ -n "${STAGE_DATA:-}" ]]; then
+    BOOTSTRAP_T=$(parse_stage_time "bootstrap"  "$STAGE_DATA")
+    MAINQUERY_T=$(parse_stage_time "main_query" "$STAGE_DATA")
+    TEMPLATE_T=$(parse_stage_time  "template"   "$STAGE_DATA")
 
     # Flag stages over 0.5s as slow, over 0.2s as a warning
     check_stage() {
@@ -281,8 +277,8 @@ if [[ -n "${STAGE_OUT:-}" && "$STAGE_OUT" != *"Error"* ]]; then
 fi
 
 # Count spotlight hooks (slow hooks ≥1ms) — fewer is better
-if [[ -n "${SPOTLIGHT_OUT:-}" && "$SPOTLIGHT_OUT" != *"Error"* ]]; then
-    SLOW_COUNT=$(echo "$SPOTLIGHT_OUT" | grep -c '^| ' || true)
+if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
+    SLOW_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     if [[ "$SLOW_COUNT" -eq 0 ]]; then
         WINS+=("No hooks exceeded 1ms — excellent hook performance")
     elif [[ "$SLOW_COUNT" -le 5 ]]; then
@@ -294,8 +290,8 @@ if [[ -n "${SPOTLIGHT_OUT:-}" && "$SPOTLIGHT_OUT" != *"Error"* ]]; then
     fi
 
     # Surface the single slowest hook by name
-    SLOWEST_HOOK=$(echo "$SPOTLIGHT_OUT" | grep '^| ' | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$2); print $2}')
-    SLOWEST_TIME=$(echo "$SPOTLIGHT_OUT" | grep '^| ' | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+    SLOWEST_HOOK=$(echo "$SPOTLIGHT_DATA" | grep '^| ' | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$2); print $2}')
+    SLOWEST_TIME=$(echo "$SPOTLIGHT_DATA" | grep '^| ' | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
     if [[ -n "$SLOWEST_HOOK" && -n "$SLOWEST_TIME" ]]; then
         ISSUES+=("Slowest hook: '$SLOWEST_HOOK' at ${SLOWEST_TIME}s — investigate callbacks on this hook")
     fi
