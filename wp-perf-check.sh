@@ -61,9 +61,9 @@ require() {
 # ── File output setup ────────────────────────────────────────
 REPORT_FILENAME="wp-perf-check-$(date -u '+%Y-%m-%d-%H%M%S')-${DOMAIN}.txt"
 REPORT_TMPFILE="$(mktemp)"
-set +o pipefail
-exec > >(tee -i "$REPORT_TMPFILE") 2>&1
-set -o pipefail
+exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
+tail -f "$REPORT_TMPFILE" >&3 &
+TAIL_PID=$!
 
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
@@ -830,8 +830,8 @@ row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
 
 # ── Save report ───────────────────────────────────────────────
-# Give the tee process a moment to flush, then strip ANSI and write the clean file
-sleep 0.2
+kill "$TAIL_PID" 2>/dev/null; wait "$TAIL_PID" 2>/dev/null; sleep 0.1
+exec 1>&3 3>&-
 sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
 rm -f "$REPORT_TMPFILE"
-printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME" > /dev/tty
+printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"

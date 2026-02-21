@@ -47,9 +47,14 @@ SITE_URL="$(wp option get siteurl --quiet 2>/dev/null || echo 'unknown')"
 SITE_HOST="$(echo "$SITE_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')"
 REPORT_FILENAME="wp-profile-diag-$(date -u '+%Y-%m-%d-%H%M%S')-${SITE_HOST}.txt"
 REPORT_TMPFILE="$(mktemp)"
-set +o pipefail
-exec > >(tee -i "$REPORT_TMPFILE") 2>&1
-set -o pipefail
+# Duplicate original stdout to fd 3 (terminal), then redirect stdout to tmpfile.
+# All output goes to the file; we tee to the terminal by writing to fd 3 via a
+# trap. Simpler and more portable than process substitution (>(tee ...)) which
+# requires /dev/fd support not present on all Linux hosts.
+exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
+# Background tail so output still streams to the terminal in real time
+tail -f "$REPORT_TMPFILE" >&3 &
+TAIL_PID=$!
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
@@ -366,7 +371,9 @@ row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
 
 # ── Save report ───────────────────────────────────────────────
-sleep 0.2
+# Stop the tail, restore stdout, strip ANSI for the clean saved file
+kill "$TAIL_PID" 2>/dev/null; wait "$TAIL_PID" 2>/dev/null; sleep 0.1
+exec 1>&3 3>&-
 sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
 rm -f "$REPORT_TMPFILE"
-printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME" > /dev/tty
+printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
