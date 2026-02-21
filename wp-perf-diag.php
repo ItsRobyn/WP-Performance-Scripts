@@ -161,25 +161,54 @@ if (!is_wp_error($wp_ver_response)) {
     $php_minimum     = $wp_ver_body['minimum_php']     ?? null;
 }
 
-// PHP Version — flag against WordPress's recommended and minimum PHP versions
-if ($php_recommended) {
-    $php_below_recommended = version_compare(PHP_VERSION, $php_recommended, '<');
-    $php_below_minimum     = $php_minimum && version_compare(PHP_VERSION, $php_minimum, '<');
-    if ($php_below_minimum) {
+// PHP Version — check against actively supported major.minor branches from php.net.
+// We fetch the latest releases and derive the two highest major.minor branches
+// (e.g. 8.5 and 8.4). Only those are considered current/OK; anything older is WARN.
+// This is more meaningful than WordPress's recommended_php (which returns 7.2).
+$php_net_response = wp_remote_get('https://www.php.net/releases/index.php?json&max=20&version=8', [
+    'timeout'   => 5,
+    'sslverify' => false,
+]);
+$php_current_major_minors = [];
+if (!is_wp_error($php_net_response)) {
+    $php_releases = json_decode(wp_remote_retrieve_body($php_net_response), true);
+    if (is_array($php_releases)) {
+        foreach (array_keys($php_releases) as $ver) {
+            $parts = explode('.', $ver);
+            if (count($parts) >= 2) {
+                $mm = $parts[0] . '.' . $parts[1]; // e.g. "8.5"
+                if (!in_array($mm, $php_current_major_minors)) {
+                    $php_current_major_minors[] = $mm;
+                }
+            }
+        }
+        // Releases are returned newest-first; keep only the two highest branches
+        $php_current_major_minors = array_slice($php_current_major_minors, 0, 2);
+    }
+}
+
+$running_mm = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION; // e.g. "8.2"
+if ($php_current_major_minors) {
+    $php_latest_branch  = $php_current_major_minors[0]; // e.g. "8.5"
+    $php_prev_branch    = $php_current_major_minors[1] ?? null; // e.g. "8.4"
+    $branch_label       = $php_prev_branch ? "$php_latest_branch / $php_prev_branch" : $php_latest_branch;
+
+    if ($php_minimum && version_compare(PHP_VERSION, $php_minimum, '<')) {
         $php_status = 'BAD';
         $php_note   = " (below WP minimum: $php_minimum)";
-    } elseif ($php_below_recommended) {
+    } elseif (!in_array($running_mm, $php_current_major_minors)) {
         $php_status = 'WARN';
-        $php_note   = " (recommended: $php_recommended)";
+        $php_note   = " (current supported branches: $branch_label)";
     } else {
         $php_status = 'OK';
-        $php_note   = " (meets recommended $php_recommended)";
+        $php_note   = " (current: $running_mm)";
     }
-    row('PHP Version', PHP_VERSION . $php_note, $php_status);
 } else {
-    // Fallback if API unavailable: flag anything below 8.1 (security-only as of late 2024)
-    row('PHP Version', PHP_VERSION, version_compare(PHP_VERSION, '8.1', '>=') ? 'OK' : 'WARN');
+    // Fallback if php.net API unavailable
+    $php_status = version_compare(PHP_VERSION, '8.2', '>=') ? 'OK' : 'WARN';
+    $php_note   = $php_status === 'WARN' ? ' (consider upgrading to PHP 8.4+)' : '';
 }
+row('PHP Version', PHP_VERSION . $php_note, $php_status);
 
 // WordPress version
 if ($wp_latest_ver) {
@@ -511,7 +540,6 @@ $perf_plugins = [
     'debug-bar/debug-bar.php'                     => ['Debug Bar', 'debug'],
     'new-relic-browser/new-relic-browser.php'     => ['New Relic', 'monitoring'],
     // Potentially heavy
-    'jetpack/jetpack.php'                         => ['Jetpack', 'heavy'],
     'woocommerce/woocommerce.php'                 => ['WooCommerce', 'ecommerce'],
     'elementor/elementor.php'                     => ['Elementor', 'builder'],
     'js_composer/js_composer.php'                 => ['WPBakery', 'builder'],
@@ -716,9 +744,9 @@ foreach ($notable_hooks as $name => $count) {
     $spread  = isset($priority_spread[$name])
         ? ' [priority ' . $priority_spread[$name][0] . '–' . $priority_spread[$name][1] . ']'
         : '';
-    $flag    = $count > 20 ? ' [WARN]' : '';
-    $GLOBALS['out'][] = sprintf("    %-45s %d callbacks%s%s",
-        substr($name, 0, 45), $count, $spread, $flag);
+    $line = sprintf("    %-45s %d callbacks%s", substr($name, 0, 45), $count, $spread);
+    if ($count > 20) $line .= " \033[0;33m[WARN]\033[0m";
+    $GLOBALS['out'][] = $line;
 }
 
 // Hooks with unusually wide priority spreads (can indicate load-order conflicts)
