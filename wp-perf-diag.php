@@ -452,6 +452,7 @@ row('Batcache (advanced-cache.php)', $is_batcache ? 'Present' : ($batcache_activ
 // The $batcache global is consumed by advanced-cache.php during early bootstrap,
 // so by the time wp eval-file runs the global is no longer reliable.
 // Instead, parse wp-config.php directly for the customisation snippet.
+$bc_customised = false; // initialised here so it's available in the summary
 if ($is_batcache) {
     $bc_max_age = $bc_seconds = $bc_times = null;
     $wp_config_src = file_exists(ABSPATH . 'wp-config.php')
@@ -1622,6 +1623,8 @@ elseif (!$batcache_hit && $batcache_set)
     $issues[] = 'Batcache SET on warm request — cache was written but a HIT was not confirmed';
 elseif (!$batcache_seen && !$is_batcache)
     $issues[] = 'No Batcache drop-in detected and x-nananana absent — page caching is likely not active';
+if ($is_batcache && !$bc_customised)
+    $issues[] = 'Batcache cache lifetime not extended — add customisations to wp-config.php (max_age=86400, seconds=0, times=1)';
 
 // Edge cache (x-ac)
 $edge_hit    = ($x_ac2 !== null && stripos($x_ac2, 'HIT') !== false)
