@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================
-# wp-profile-debug.sh — WP-CLI Profile Command Installer & Runner
+# wp-profile-diag.sh — WP-CLI Profile Command Installer & Runner
 # =============================================================
 # Installs Composer and wp-cli/profile-command if not already
 # present, then runs a full profile breakdown for the current
 # WordPress site.
 #
 # Usage (run from the site's htdocs/public_html directory):
-#   bash wp-profile-debug.sh
+#   bash wp-profile-diag.sh
 #
 # Or download and run in one step:
-#   wget -q -O wp-profile-debug.sh "https://raw.githubusercontent.com/ItsRobyn/WP-Performance-Scripts/main/wp-profile-debug.sh?$(date +%s)" && bash wp-profile-debug.sh
+#   wget -q -O wp-profile-diag.sh "https://raw.githubusercontent.com/ItsRobyn/WP-Performance-Scripts/main/wp-profile-diag.sh?$(date +%s)" && bash wp-profile-diag.sh
 #
 # Requirements: php, wp (WP-CLI), internet access
 # Safe: installs only to ~/.config — no system-wide changes.
@@ -46,7 +46,7 @@ die() {
 echo -e "\n${PRI}"
 echo "  ┌──────────────────────────────────────────────────────────┐"
 echo "  │           WP-CLI Profile Installer & Runner              │"
-echo "  │                 wp-profile-debug.sh                      │"
+echo "  │                 wp-profile-diag.sh                       │"
 echo "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 row "Run at"  "$(date '+%Y-%m-%d %H:%M:%S %Z')"
@@ -156,8 +156,8 @@ composer() { php "$COMPOSER_BIN" "$@"; }
 section "4. WP-CLI PROFILE COMMAND"
 
 # Check if already installed
-if wp package list 2>/dev/null | grep -q 'wp-cli/profile-command'; then
-    PROFILE_VER=$(wp package list 2>/dev/null | grep 'profile-command' | awk '{print $2}' || echo 'installed')
+if wp --no-color package list 2>/dev/null | grep -q 'wp-cli/profile-command'; then
+    PROFILE_VER=$(wp --no-color package list 2>/dev/null | grep 'profile-command' | awk '{print $2}' || echo 'installed')
     good "wp-cli/profile-command already installed ($PROFILE_VER)"
 else
     step "Installing wp-cli/profile-command..."
@@ -172,7 +172,7 @@ else
 fi
 
 # Verify the profile command is available
-if ! wp help profile &>/dev/null 2>&1; then
+if ! wp --no-color help profile &>/dev/null 2>&1; then
     die "wp profile command not available after install — try opening a new shell session and re-running"
 fi
 good "wp profile command is available"
@@ -185,7 +185,7 @@ note "Stages: bootstrap → main_query → template"
 echo ""
 
 # Run stage profile — allow it to fail gracefully
-if ! wp profile stage --all --orderby=time --color 2>&1; then
+if ! wp --no-color profile stage --all --orderby=time 2>&1; then
     warn "wp profile stage failed — site may not be reachable via loopback"
     note "Ensure the site URL is correct in wp-config.php / WP settings"
     note "Some managed hosts block loopback requests"
@@ -197,7 +197,7 @@ section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
 note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
 echo ""
 
-if ! wp profile hook --all --orderby=time --color 2>&1; then
+if ! wp --no-color profile hook --all --orderby=time 2>&1; then
     warn "wp profile hook failed"
     note "This requires a working loopback HTTP connection"
 fi
@@ -208,7 +208,7 @@ section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
 note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
 echo ""
 
-if ! wp profile hook --all --spotlight --orderby=time --color 2>&1; then
+if ! wp --no-color profile hook --all --spotlight --orderby=time 2>&1; then
     warn "wp profile hook --spotlight failed"
 fi
 
@@ -218,7 +218,7 @@ section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
 note "Profiling hooks during the main query stage..."
 echo ""
 
-if ! wp profile hook wp --orderby=time --color 2>&1; then
+if ! wp --no-color profile hook wp --orderby=time 2>&1; then
     warn "wp profile hook wp failed"
     note "The 'wp' stage runs after query vars are set — usually where template logic fires"
 fi
