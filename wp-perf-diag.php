@@ -412,6 +412,30 @@ $batcache_content = $batcache_active ? file_get_contents(WP_CONTENT_DIR . '/adva
 $is_batcache = $batcache_active && stripos($batcache_content, 'batcache') !== false;
 row('Batcache (advanced-cache.php)', $is_batcache ? 'Present' : ($batcache_active ? 'Other drop-in present' : 'Not found'),
     $is_batcache ? 'OK' : 'INFO');
+
+// Check for Batcache customisations (max_age, seconds, times)
+// Pressable's recommended snippet sets these in wp-config.php via a global $batcache
+if ($is_batcache) {
+    global $batcache;
+    $bc_max_age  = is_object($batcache) ? ($batcache->max_age  ?? null)
+                 : (is_array($batcache)  ? ($batcache['max_age']  ?? null) : null);
+    $bc_seconds  = is_object($batcache) ? ($batcache->seconds  ?? null)
+                 : (is_array($batcache)  ? ($batcache['seconds']  ?? null) : null);
+    $bc_times    = is_object($batcache) ? ($batcache->times    ?? null)
+                 : (is_array($batcache)  ? ($batcache['times']    ?? null) : null);
+    $bc_customised = ($bc_max_age !== null || $bc_seconds !== null || $bc_times !== null);
+    if ($bc_customised) {
+        $bc_parts = [];
+        if ($bc_max_age !== null) $bc_parts[] = 'max_age=' . $bc_max_age . 's';
+        if ($bc_seconds !== null) $bc_parts[] = 'seconds=' . $bc_seconds;
+        if ($bc_times   !== null) $bc_parts[] = 'times='   . $bc_times;
+        row('Batcache customisations', implode(', ', $bc_parts), 'OK');
+    } else {
+        row('Batcache customisations', 'none detected — using defaults', 'INFO');
+        note('Extend cache lifetime in wp-config.php: max_age=86400, seconds=0, times=1');
+    }
+}
+
 row('WP_CACHE constant', defined('WP_CACHE') && WP_CACHE ? 'true' : 'false',
     defined('WP_CACHE') && WP_CACHE ? 'OK' : 'WARN');
 
@@ -819,8 +843,6 @@ row('Enqueued scripts', $enqueued_scripts, $enqueued_scripts > 20 ? 'WARN' : 'OK
 row('Enqueued styles',  $enqueued_styles,  $enqueued_styles  > 15 ? 'WARN' : 'OK');
 
 row('CONCATENATE_SCRIPTS', defined('CONCATENATE_SCRIPTS') ? (CONCATENATE_SCRIPTS ? 'true' : 'false') : 'not set');
-row('COMPRESS_SCRIPTS',    defined('COMPRESS_SCRIPTS')    ? (COMPRESS_SCRIPTS    ? 'true' : 'false') : 'not set');
-row('COMPRESS_CSS',        defined('COMPRESS_CSS')        ? (COMPRESS_CSS        ? 'true' : 'false') : 'not set');
 
 // ─────────────────────────────────────────────────────────────
 // 8. REACHABILITY & HEADERS (self HTTP check)
@@ -1031,9 +1053,6 @@ $wp_config_checks = [
     'EMPTY_TRASH_DAYS'      => [null,  'Consider setting (default 30)'],
     'WP_POST_REVISIONS'     => [null,  'Consider limiting (e.g. 5-10)'],
     'DISABLE_WP_CRON'       => [true,  'Consider using server cron instead'],
-    'COMPRESS_SCRIPTS'      => [true,  'Enables JS compression'],
-    'COMPRESS_CSS'          => [true,  'Enables CSS compression'],
-    'WP_HTTP_BLOCK_EXTERNAL' => [null, 'Blocks unexpected outbound HTTP'],
 ];
 
 foreach ($wp_config_checks as $const => $info) {
