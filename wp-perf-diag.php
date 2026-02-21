@@ -1020,6 +1020,7 @@ if (is_wp_error($response)) {
             row("  $h", $val);
         }
     }
+    $GLOBALS['out'][] = '';
 
     // Batcache (x-nananana)
     $x_nananana = $headers->offsetGet('x-nananana');
@@ -1060,11 +1061,8 @@ if (is_wp_error($response)) {
 
     if ($cf_status)  row('Cloudflare cache status', $cf_status, in_array(strtoupper($cf_status), ['HIT', 'REVALIDATED', 'UPDATING']) ? 'OK' : 'INFO');
     if ($x_cache)    row('Edge cache (x-cache)', $x_cache, stripos($x_cache, 'HIT') !== false ? 'OK' : 'INFO');
-    if ($cache_ctrl) {
-        row('Cache-Control', $cache_ctrl);
-        if (stripos($cache_ctrl, 'no-store') !== false || stripos($cache_ctrl, 'no-cache') !== false) {
-            warn('Cache-Control prevents caching. Check if intentional.');
-        }
+    if ($cache_ctrl && (stripos($cache_ctrl, 'no-store') !== false || stripos($cache_ctrl, 'no-cache') !== false)) {
+        warn("Cache-Control: $cache_ctrl — this prevents caching. Check if intentional.");
     }
 
     // Second request to check if cache kicks in
@@ -1088,8 +1086,18 @@ if (is_wp_error($response)) {
         if ($age) row('Cache Age header', $age . 's');
 
         $x_nananana2 = $headers2->offsetGet('x-nananana');
-        if ($x_nananana2) row('x-nananana (2nd request)', $x_nananana2,
-            stripos($x_nananana2, 'Batcache-Hit') !== false ? 'OK' : 'WARN');
+        if ($x_nananana2) {
+            row('x-nananana (2nd request)', $x_nananana2,
+                stripos($x_nananana2, 'Batcache-Hit') !== false ? 'OK' : 'WARN');
+            if (stripos($x_nananana2, 'Batcache-Set') !== false) {
+                $edge_hit_on_2nd = isset($x_ac2) && stripos($x_ac2, 'HIT') !== false;
+                if ($edge_hit_on_2nd) {
+                    note('Batcache-Set on 2nd request — but edge cache is a HIT, so the edge is likely serving the cached page. Probably fine, but worth a third request to confirm a Batcache HIT.');
+                } else {
+                    note('Batcache-Set on 2nd request — page was cached but not yet serving HITs. Try a third request.');
+                }
+            }
+        }
 
         $x_ac2 = $headers2->offsetGet('x-ac');
         if ($x_ac2) row('x-ac (2nd request)', $x_ac2,
