@@ -60,14 +60,14 @@ require() {
 
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
-echo "  ┌──────────────────────────────────────────────────────────┐"
-echo "  │          WP External Performance Diagnostics             │"
-echo "  │                  wp-perf-check.sh                        │"
-echo "  └──────────────────────────────────────────────────────────┘${RST}"
+echo -e "  ┌──────────────────────────────────────────────────────────┐"
+echo -e "  │${SEC}          WP External Performance Diagnostics             ${PRI}│"
+echo -e "  │${SEC}                  wp-perf-check.sh                        ${PRI}│"
+echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
+echo -e "  ${SEC}By Robyn × Claude AI${RST}"
 echo ""
-row "Target URL"  "$TARGET_URL"
-row "Domain"      "$DOMAIN"
-row "Run at"      "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+row "Generated"   "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+row "Site"        "$TARGET_URL"
 
 # ─────────────────────────────────────────────────────────────
 # 1. DNS RESOLUTION

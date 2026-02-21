@@ -43,13 +43,16 @@ die() {
 }
 
 # ── Header ────────────────────────────────────────────────────
+SITE_URL="$(wp option get siteurl --quiet 2>/dev/null || echo 'unknown')"
 echo -e "\n${PRI}"
-echo "  ┌──────────────────────────────────────────────────────────┐"
-echo "  │           WP-CLI Profile Installer & Runner              │"
-echo "  │                 wp-profile-diag.sh                       │"
+echo -e "  ┌──────────────────────────────────────────────────────────┐"
+echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
+echo -e "  │${SEC}                 wp-profile-diag.sh                       ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
+echo -e "  ${SEC}By Robyn × Claude AI${RST}"
 echo ""
-row "Run at"  "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+row "Generated"  "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+row "Site"       "$SITE_URL"
 
 # ── Preflight checks ──────────────────────────────────────────
 section "1. PREFLIGHT CHECKS"

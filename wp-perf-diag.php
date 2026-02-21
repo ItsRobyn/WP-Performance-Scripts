@@ -137,6 +137,9 @@ $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('WP Performance Diagnos
 $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('wp-perf-diag.php')           . $pri . '│' . $rst;
 $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('By Robyn × Claude AI')       . $pri . '│' . $rst;
 $GLOBALS['out'][] = $pri . '  └──────────────────────────────────────────────────────────┘' . $rst;
+$GLOBALS['out'][] = '';
+row('Generated', gmdate('Y-m-d H:i:s') . ' UTC');
+row('Site',      get_home_url());
 
 // ─────────────────────────────────────────────────────────────
 // 1. ENVIRONMENT
