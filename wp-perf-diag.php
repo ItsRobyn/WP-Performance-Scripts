@@ -127,13 +127,16 @@ $pri = $is_cli ? "\033[1;38;2;182;29;111m" : '';
 $rst = $is_cli ? "\033[0m" : '';
 $wht = $is_cli ? "\033[1;38;2;255;255;255m" : '';
 $GLOBALS['out'][] = '';
+// Inner width = 58 visible chars; centre each line programmatically
+$_hdr_center = function(string $s, int $w = 58): string {
+    $pad = $w - mb_strlen($s);
+    return str_repeat(' ', (int)floor($pad / 2)) . $s . str_repeat(' ', (int)ceil($pad / 2));
+};
 $GLOBALS['out'][] = $pri . '  ┌──────────────────────────────────────────────────────────┐' . $rst;
-$GLOBALS['out'][] = $pri . '  │' . $wht . '         WP Performance Diagnostics                    ' . $pri . '│' . $rst;
-$GLOBALS['out'][] = $pri . '  │' . $wht . '               wp-perf-diag.php                        ' . $pri . '│' . $rst;
-$GLOBALS['out'][] = $pri . '  │' . $wht . '               By Robyn × Claude AI                    ' . $pri . '│' . $rst;
+$GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('WP Performance Diagnostics') . $pri . '│' . $rst;
+$GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('wp-perf-diag.php')           . $pri . '│' . $rst;
+$GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('By Robyn × Claude AI')       . $pri . '│' . $rst;
 $GLOBALS['out'][] = $pri . '  └──────────────────────────────────────────────────────────┘' . $rst;
-$GLOBALS['out'][] = '';
-$GLOBALS['out'][] = '  Run at: ' . date('Y-m-d H:i:s T');
 
 // ─────────────────────────────────────────────────────────────
 // 1. ENVIRONMENT
