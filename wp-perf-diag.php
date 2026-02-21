@@ -1471,6 +1471,7 @@ if (!class_exists('WooCommerce')) {
 
     // ── Order counts by status ───────────────────────────────
     heading('Order counts by status:');
+    $total_order_count = 0;
     if ($hpos_option === 'yes') {
         // HPOS: orders are in wc_orders table
         $orders_table = $wpdb->prefix . 'wc_orders';
@@ -1483,6 +1484,7 @@ if (!class_exists('WooCommerce')) {
         ");
         if ($order_statuses) {
             foreach ($order_statuses as $s) {
+                $total_order_count += (int)$s->cnt;
                 row('  ' . $s->status, number_format((int)$s->cnt),
                     in_array($s->status, ['wc-on-hold', 'wc-pending']) && (int)$s->cnt > 100 ? 'WARN' : 'OK');
             }
@@ -1496,6 +1498,7 @@ if (!class_exists('WooCommerce')) {
                 $status
             ));
             if ((int)$cnt === 0) continue;
+            $total_order_count += (int)$cnt;
             $flag = in_array($status, ['wc-on-hold', 'wc-pending']) && (int)$cnt > 100 ? 'WARN' : 'OK';
             row('  ' . $status, number_format((int)$cnt), $flag);
         }
@@ -1671,6 +1674,8 @@ if (isset($parent_new_ver) && $parent_new_ver)
     $issues[] = "Parent theme \"" . $parent->get('Name') . "\" has an update available (→ $parent_new_ver)";
 if (isset($wc_new_ver) && $wc_new_ver && isset($wc_current_ver) && version_compare($wc_current_ver, $wc_new_ver, '<'))
     $issues[] = "WooCommerce is outdated ($wc_current_ver → $wc_new_ver)";
+if (isset($hpos_option) && $hpos_option !== 'yes' && isset($total_order_count) && $total_order_count >= 500)
+    $issues[] = "HPOS (High-Performance Order Storage) is not enabled — with " . number_format($total_order_count) . " orders, enabling it will improve order query performance (WooCommerce → Settings → Advanced → Features)";
 // OPcache: only recommend enabling it if the site has enough PHP complexity
 // to make a meaningful difference — i.e. a page builder, high plugin count,
 // or high asset count. Low-complexity sites wouldn't benefit noticeably.
