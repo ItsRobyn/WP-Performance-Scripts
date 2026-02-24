@@ -42,27 +42,41 @@ die() {
     exit 1
 }
 
+# ── Environment vars needed before first wp call ──────────────
+COMPOSER_HOME="${HOME}/.config/composer"
+WP_CLI_PACKAGES_DIR="${HOME}/.config/wp-cli/packages"
+export COMPOSER_HOME
+export WP_CLI_PACKAGES_DIR
+
 # ── Header ────────────────────────────────────────────────────
-SITE_URL="$(wp option get siteurl --quiet 2>/dev/null || echo 'unknown')"
+SITE_URL="$(wp --no-color option get siteurl 2>/dev/null)" || SITE_URL=""
+# Keep only the first line and strip any leading/trailing whitespace
+SITE_URL="$(echo "$SITE_URL" | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+[[ -z "$SITE_URL" || "$SITE_URL" != http* ]] && SITE_URL="unknown"
 SITE_HOST="$(echo "$SITE_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')"
 REPORT_FILENAME="wp-profile-diag-$(date -u '+%Y-%m-%d-%H%M%S')-${SITE_HOST}.txt"
 REPORT_TMPFILE="$(mktemp)"
 # Duplicate original stdout to fd 3 (terminal), then redirect stdout to tmpfile.
 # All output goes to the file; we tee to the terminal by writing to fd 3 via a
-# trap. Simpler and more portable than process substitution (>(tee ...)) which
-# requires /dev/fd support not present on all Linux hosts.
+# background tail. Simpler and more portable than process substitution (>(tee ...))
+# which requires /dev/fd support not present on all Linux hosts.
 exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 # Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
-# wp profile commands detect non-TTY stdout and switch to plain output,
-# breaking table formatting and making grep-based parsing return 0.
-# wp_profile() captures output with --format=table (forcing table output
-# regardless of TTY), echoes it so it hits the file/tail, and stores it
-# in a variable for summary parsing — one run, no repeated HTTP requests.
+# wp_profile() runs a wp profile subcommand and captures its output.
+# --format=table forces table output even when stdout is not a TTY
+# (wp profile detects non-TTY and defaults to plain text otherwise).
+# stderr is captured separately so errors are shown cleanly, not mixed
+# into table data. WP_PROFILE_LAST stores the output for summary parsing.
 wp_profile() {
     local output
-    output=$(wp --no-color "$@" --format=table 2>/dev/null) || return 1
+    output=$(wp --no-color "$@" --format=table 2>/tmp/wp_profile_err) || {
+        local err
+        err=$(cat /tmp/wp_profile_err 2>/dev/null)
+        [[ -n "$err" ]] && warn "wp profile error: $err"
+        return 1
+    }
     echo "$output"
     WP_PROFILE_LAST="$output"
 }
@@ -97,14 +111,7 @@ good "WP-CLI found: $WP_VER"
 # ── Environment setup ─────────────────────────────────────────
 section "2. ENVIRONMENT SETUP"
 
-# Set up paths
-COMPOSER_HOME="${HOME}/.config/composer"
-WP_CLI_PACKAGES_DIR="${HOME}/.config/wp-cli/packages"
-
-# Ensure the paths are exported for this session regardless of ~/.profile state
-export COMPOSER_HOME
-export WP_CLI_PACKAGES_DIR
-
+# COMPOSER_HOME and WP_CLI_PACKAGES_DIR already exported at top of script
 row "COMPOSER_HOME"        "$COMPOSER_HOME"
 row "WP_CLI_PACKAGES_DIR"  "$WP_CLI_PACKAGES_DIR"
 
@@ -193,8 +200,12 @@ if ! wp --no-color help profile &>/dev/null 2>&1; then
 fi
 good "wp profile command is available"
 
-# Initialise analysis vars — populated by capture runs after each display run
-STAGE_DATA=""; HOOK_ALL_COUNT=0; SPOTLIGHT_DATA=""; HOOK_WP_COUNT=0
+# Initialise analysis vars — populated by wp_profile() calls below
+STAGE_DATA=""; STAGE_COUNT=0
+HOOK_ALL_DATA=""; HOOK_ALL_COUNT=0
+SPOTLIGHT_DATA=""; SPOTLIGHT_COUNT=0
+HOOK_WP_DATA=""; HOOK_WP_COUNT=0
+WP_PROFILE_LAST=""
 
 # ── Run profile ───────────────────────────────────────────────
 section "5. WP PROFILE — STAGE BREAKDOWN"
