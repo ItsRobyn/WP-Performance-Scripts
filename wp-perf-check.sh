@@ -359,7 +359,6 @@ CACHE_HEADERS=(
     "cache-control"
     "x-cache"
     "x-cache-status"
-    "x-batcache"
     "cf-cache-status"
     "x-varnish"
     "age"

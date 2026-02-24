@@ -963,8 +963,6 @@ $enqueued_styles  = isset($wp_styles->queue)  ? count($wp_styles->queue)  : 0;
 row('Enqueued scripts', $enqueued_scripts, $enqueued_scripts > 20 ? 'WARN' : 'OK');
 row('Enqueued styles',  $enqueued_styles,  $enqueued_styles  > 15 ? 'WARN' : 'OK');
 
-row('CONCATENATE_SCRIPTS', defined('CONCATENATE_SCRIPTS') ? (CONCATENATE_SCRIPTS ? 'true' : 'false') : 'not set');
-
 // ─────────────────────────────────────────────────────────────
 // 8. REACHABILITY & HEADERS (self HTTP check)
 // ─────────────────────────────────────────────────────────────
@@ -1004,7 +1002,7 @@ if (is_wp_error($response)) {
     // Cache-related headers
     $cache_headers = [
         'x-nananana', 'x-ac',
-        'x-cache', 'x-batcache', 'x-cache-status', 'x-varnish',
+        'x-cache', 'x-cache-status', 'x-varnish',
         'x-fastly-request-id', 'cf-cache-status', 'age',
         'cache-control', 'pragma', 'expires',
         'x-cacheable', 'x-wp-cf-super-cache', 'x-wpe-request-id',
@@ -1028,10 +1026,10 @@ if (is_wp_error($response)) {
         if (stripos($x_nananana, 'Batcache-Hit') !== false) {
             good("Batcache HIT (x-nananana: $x_nananana)");
         } elseif (stripos($x_nananana, 'Batcache-Set') !== false) {
-            row('Batcache SET (x-nananana)', $x_nananana, 'WARN');
-            note('Page was just cached — it will serve as a HIT on the next request');
+            warn("Batcache not HIT (x-nananana: $x_nananana)");
+            note('Page was just cached — it should serve as a HIT on the next request');
         } else {
-            row('x-nananana (unexpected value)', $x_nananana, 'WARN');
+            warn("Batcache not HIT (x-nananana: $x_nananana)");
         }
     } else {
         bad('x-nananana header absent — Batcache may not be running or is bypassed');
@@ -1051,7 +1049,7 @@ if (is_wp_error($response)) {
             row('x-ac (unexpected value)', $x_ac, 'WARN');
         }
     } else {
-        bad('x-ac header absent — edge cache may not be active for this URL');
+        bad('x-ac header absent — ensure edge cache is enabled');
     }
 
     // Other Edge/CDN cache status
@@ -1086,20 +1084,23 @@ if (is_wp_error($response)) {
         if ($age) row('Cache Age header', $age . 's');
 
         $x_nananana2 = $headers2->offsetGet('x-nananana');
+        $x_ac2       = $headers2->offsetGet('x-ac');
+
         if ($x_nananana2) {
-            row('x-nananana (2nd request)', $x_nananana2,
-                stripos($x_nananana2, 'Batcache-Hit') !== false ? 'OK' : 'WARN');
-            if (stripos($x_nananana2, 'Batcache-Set') !== false) {
-                $edge_hit_on_2nd = isset($x_ac2) && stripos($x_ac2, 'HIT') !== false;
+            if (stripos($x_nananana2, 'Batcache-Hit') !== false) {
+                good("Batcache HIT (x-nananana: $x_nananana2)");
+            } elseif (stripos($x_nananana2, 'Batcache-Set') !== false) {
+                warn("Batcache not HIT (x-nananana: $x_nananana2)");
+                note('Page was just cached — it should serve as a HIT on the next request');
+                $edge_hit_on_2nd = $x_ac2 && stripos($x_ac2, 'HIT') !== false;
                 if ($edge_hit_on_2nd) {
-                    note('Batcache-Set on 2nd request — but edge cache is a HIT, so the edge is likely serving the cached page. Probably fine, but worth a third request to confirm a Batcache HIT.');
-                } else {
-                    note('Batcache-Set on 2nd request — page was cached but not yet serving HITs. Try a third request.');
+                    note('Edge cache is a HIT — the edge is likely serving the cached page. Verify with a third request to confirm a Batcache HIT.');
                 }
+            } else {
+                warn("Batcache not HIT (x-nananana: $x_nananana2)");
             }
         }
 
-        $x_ac2 = $headers2->offsetGet('x-ac');
         if ($x_ac2) row('x-ac (2nd request)', $x_ac2,
             stripos($x_ac2, 'HIT') !== false ? 'OK' : 'WARN');
 
@@ -1327,6 +1328,7 @@ if ($php_error_log && file_exists($php_error_log)) {
 // 11. WORDPRESS SITE HEALTH
 // ─────────────────────────────────────────────────────────────
 section('11. WORDPRESS SITE HEALTH');
+array_pop($GLOBALS['out']); // section() adds a trailing blank; heading() adds its own, so remove one
 
 // ── Post & page counts ───────────────────────────────────────
 $post_types = get_post_types(['public' => true], 'objects');
@@ -1539,7 +1541,6 @@ if (!class_exists('WooCommerce')) {
     }
 
     // ── Active payment gateways ──────────────────────────────
-    $GLOBALS['out'][] = '';
     $gateways_raw = get_option('woocommerce_gateway_order', []);
     // Get enabled gateways more reliably from individual gateway options
     $enabled_gateways = [];
@@ -1651,7 +1652,7 @@ if ($edge_bypass)
 elseif ($edge_miss)
     $issues[] = 'Edge cache MISS on warm request (x-ac) — page may not be caching at the edge';
 elseif ($x_ac === null && $x_ac2 === null)
-    $issues[] = 'x-ac header absent — edge cache not confirmed active for this URL';
+    $issues[] = 'x-ac header absent — ensure edge cache is enabled';
 
 if ($autoload_kb > 200)          $issues[] = "Autoloaded options are large ({$autoload_kb} KB) — audit with Query Monitor";
 if ((int)$expired_transients > 100) $issues[] = "Many expired transients ({$expired_transients}) — run WP-CLI: wp transient delete --expired";
