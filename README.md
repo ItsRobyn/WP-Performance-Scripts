@@ -174,7 +174,6 @@ Composer and the profile command are installed to `~/.config` — no system-wide
 
 | Finding | Fix |
 |---|---|
-| No external object cache | Install Redis or Memcached with a WP drop-in |
 | Autoloaded options >200KB | Use Query Monitor to identify culprits; many plugins cache data here unnecessarily |
 | Expired transients not clearing | `wp transient delete --expired` via WP-CLI |
 | SAVEQUERIES on in production | Remove from wp-config.php — it adds overhead to every request |
