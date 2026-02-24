@@ -349,7 +349,7 @@ HEADERS_WARM=$(curl -sI --max-time 15 \
     "$TARGET_URL" 2>/dev/null || true)
 
 get_header() {
-    echo "$1" | grep -i "^$2:" | head -1 | sed "s/^$2: //i" | tr -d '\r'
+    echo "$1" | grep -i "^$2:" | head -1 | sed "s/^$2: //i" | tr -d '\r' || true
 }
 
 # Cache/CDN headers to check (both cold and warm)
@@ -397,8 +397,8 @@ done
 echo ""
 
 # set-cookie — grab ALL values (multiple headers possible), check both cold and warm
-COOKIES_WARM=$(echo "$HEADERS_WARM" | grep -i "^set-cookie:" | sed 's/^[Ss]et-[Cc]ookie: //' | tr -d '\r')
-COOKIES_COLD=$(echo "$HEADERS_COLD" | grep -i "^set-cookie:" | sed 's/^[Ss]et-[Cc]ookie: //' | tr -d '\r')
+COOKIES_WARM=$(echo "$HEADERS_WARM" | grep -i "^set-cookie:" | sed 's/^[Ss]et-[Cc]ookie: //' | tr -d '\r' || true)
+COOKIES_COLD=$(echo "$HEADERS_COLD" | grep -i "^set-cookie:" | sed 's/^[Ss]et-[Cc]ookie: //' | tr -d '\r' || true)
 COOKIE_COUNT_WARM=$(echo "$COOKIES_WARM" | grep -c '.' || echo 0)
 COOKIE_COUNT_COLD=$(echo "$COOKIES_COLD" | grep -c '.' || echo 0)
 
@@ -492,12 +492,6 @@ if [[ -n "$X_CACHE" ]]; then
     else warn "x-cache MISS: $X_CACHE"; fi
 fi
 
-X_BATCACHE=$(get_header "$HEADERS_WARM" "x-batcache")
-if [[ -n "$X_BATCACHE" ]]; then
-    good "Batcache header found: $X_BATCACHE"
-else
-    note "No x-batcache header (Batcache may not be active, or not exposing headers)"
-fi
 
 CACHE_CTRL=$(get_header "$HEADERS_WARM" "cache-control")
 if echo "$CACHE_CTRL" | grep -qi "no-store\|no-cache"; then
@@ -524,7 +518,7 @@ note "Checking compression..."
 ENCODING=$(curl -sI --max-time 10 \
     -H "Accept-Encoding: br, gzip, deflate" \
     -H "User-Agent: WPPerfDiag/1.0" \
-    "$TARGET_URL" 2>/dev/null | grep -i "content-encoding" | head -1 | tr -d '\r')
+    "$TARGET_URL" 2>/dev/null | grep -i "content-encoding" | head -1 | tr -d '\r' || true)
 if [[ -n "$ENCODING" ]]; then
     good "Compression active: $ENCODING"
 else
@@ -541,7 +535,7 @@ note "Probing for WordPress signals..."
 BODY=$(curl -s --max-time 15 "$TARGET_URL" 2>/dev/null || true)
 
 # WP generator tag
-WP_VER=$(echo "$BODY" | grep -o 'content="WordPress [0-9.]*"' | grep -o '[0-9.]*' | head -1)
+WP_VER=$(echo "$BODY" | grep -o 'content="WordPress [0-9.]*"' | grep -o '[0-9.]*' | head -1 || true)
 if [[ -n "$WP_VER" ]]; then
     warn "WordPress version exposed in meta generator: $WP_VER (consider removing)"
 else
@@ -680,10 +674,10 @@ FULL_BODY=$(curl -sL --max-time 20 \
 
 if [[ -n "$FULL_BODY" ]]; then
     # Count scripts
-    SCRIPT_COUNT=$(echo "$FULL_BODY" | grep -oi '<script[^>]*src=' | wc -l | tr -d ' ')
-    STYLE_COUNT=$(echo  "$FULL_BODY" | grep -oi '<link[^>]*stylesheet' | wc -l | tr -d ' ')
-    IMG_COUNT=$(echo    "$FULL_BODY" | grep -oi '<img[^>]*>' | wc -l | tr -d ' ')
-    IFRAME_COUNT=$(echo "$FULL_BODY" | grep -oi '<iframe' | wc -l | tr -d ' ')
+    SCRIPT_COUNT=$(echo "$FULL_BODY" | grep -oi '<script[^>]*src=' | wc -l | tr -d ' ' || true)
+    STYLE_COUNT=$(echo  "$FULL_BODY" | grep -oi '<link[^>]*stylesheet' | wc -l | tr -d ' ' || true)
+    IMG_COUNT=$(echo    "$FULL_BODY" | grep -oi '<img[^>]*>' | wc -l | tr -d ' ' || true)
+    IFRAME_COUNT=$(echo "$FULL_BODY" | grep -oi '<iframe' | wc -l | tr -d ' ' || true)
 
     row "External script tags" "$SCRIPT_COUNT" 
     (( SCRIPT_COUNT > 20 )) && warn "High number of scripts ($SCRIPT_COUNT) — check for bloat"
@@ -708,7 +702,7 @@ if head_start >= 0 and head_end >= 0:
     print(content[head_start:head_end])
 " 2>/dev/null || true)
     
-    BLOCKING_SCRIPTS=$(echo "$HEAD" | grep -oi '<script[^>]*src=[^>]*>' | grep -v 'async\|defer' | wc -l | tr -d ' ')
+    BLOCKING_SCRIPTS=$(echo "$HEAD" | grep -oi '<script[^>]*src=[^>]*>' | grep -v 'async\|defer' | wc -l | tr -d ' ' || true)
     row "Render-blocking scripts in <head>" "$BLOCKING_SCRIPTS"
     (( BLOCKING_SCRIPTS > 2 )) && warn "$BLOCKING_SCRIPTS render-blocking scripts in <head> — add async/defer"
 
@@ -733,7 +727,7 @@ if head_start >= 0 and head_end >= 0:
         sort | uniq -c | sort -rn | head -15 | \
         while read count domain; do
             echo "    $count refs — $domain"
-        done
+        done || true
 fi
 
 # ─────────────────────────────────────────────────────────────
