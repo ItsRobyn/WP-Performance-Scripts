@@ -202,7 +202,7 @@ if ($php_current_major_minors) {
         $php_note   = " (below WP minimum: $php_minimum)";
     } elseif (!in_array($running_mm, $php_current_major_minors)) {
         $php_status = 'WARN';
-        $php_note   = " (current supported branches: $branch_label)";
+        $php_note   = " (current recommended versions: $branch_label)";
     } else {
         $php_status = 'OK';
         $php_note   = " (current: $running_mm)";
@@ -969,8 +969,12 @@ row('Enqueued styles',  $enqueued_styles,  $enqueued_styles  > 15 ? 'WARN' : 'OK
 section('8. HTTP SELF-CHECK (TTFB & CACHE HEADERS)');
 
 $home_url = get_home_url();
-note("Making HTTP request to: $home_url");
-note("This checks cache headers, TTFB, and edge caching signals.");
+// Append a unique query string to guarantee a cache miss (bypasses Batcache and edge cache).
+$bust_qs  = (strpos($home_url, '?') !== false ? '&' : '?') . 'nocache=' . time() . '&_=' . mt_rand(100000, 999999);
+$bust_url = $home_url . $bust_qs;
+note("Making HTTP request to: $bust_url");
+note("Cache-busting query string ensures an uncached response for accurate TTFB.");
+note("Second request (below) uses the plain home URL to check warm-cache behaviour.");
 $GLOBALS['out'][] = '';
 
 // Initialise cache-header vars — populated inside the response block, read in summary.
@@ -980,10 +984,10 @@ $x_nananana2 = null; // from 2nd request (warm)
 $x_ac2       = null; // from 2nd request
 
 $start_http = microtime(true);
-$response = wp_remote_get($home_url, [
+$response = wp_remote_get($bust_url, [
     'timeout'    => 15,
     'user-agent' => 'WPPerfDiag/1.0',
-    'headers'    => ['Cache-Control' => 'no-cache'],
+    'headers'    => ['Cache-Control' => 'no-cache, no-store', 'Pragma' => 'no-cache'],
     'sslverify'  => false,
 ]);
 $ttfb = microtime(true) - $start_http;
@@ -1376,7 +1380,6 @@ if ($total_users > 10000) {
 }
 
 // ── Active theme details ─────────────────────────────────────
-$GLOBALS['out'][] = '';
 $theme = wp_get_theme();
 $parent = $theme->parent();
 heading('Active theme:');
@@ -1785,6 +1788,8 @@ if (class_exists('WooCommerce')) {
         $wins[] = 'WooCommerce is up to date (' . ($wc_current_ver ?? '') . ')';
     if (isset($abandoned) && (int)$abandoned === 0)
         $wins[] = 'No expired WooCommerce sessions';
+    if (isset($hpos_option) && $hpos_option === 'yes')
+        $wins[] = 'HPOS (High-Performance Order Storage) is enabled';
 }
 
 if ($wins) {
@@ -1818,8 +1823,17 @@ $full_output = implode("\n", $GLOBALS['out']) . "\n";
 echo $full_output;
 
 // ── Save plain-text report ────────────────────────────────────
-// Strip ANSI escape codes so the saved file is clean plain text.
+// Strip ANSI escape codes, then replace UTF-8 box-drawing/symbol chars with ASCII
+// equivalents so the saved file is readable in any editor regardless of encoding.
 $plain_output = preg_replace('/\033\[[0-9;]*m/', '', $full_output);
+$plain_output = strtr($plain_output, [
+    '┌' => '+', '─' => '-', '┐' => '+',
+    '└' => '+', '┘' => '+', '│' => '|',
+    '↳' => '>',
+    '⚠' => '!',
+    '✓' => '+',
+    '✗' => 'x',
+]);
 $report_filename = 'wp-perf-diag-' . date('Y-m-d-His') . '-' . parse_url(get_site_url(), PHP_URL_HOST) . '.txt';
 $report_path = getcwd() . '/' . $report_filename;
 $save_style = $is_cli ? "\033[3;38;2;136;146;160m" : '';

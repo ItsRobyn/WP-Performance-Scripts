@@ -39,12 +39,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Normalise URL
+# Normalise URL — add https:// if no scheme, upgrade http:// to https://
+if [[ "$TARGET_URL" != http://* && "$TARGET_URL" != https://* ]]; then
+    TARGET_URL="https://${TARGET_URL}"
+elif [[ "$TARGET_URL" == http://* ]]; then
+    TARGET_URL="https://${TARGET_URL#http://}"
+fi
 TARGET_URL="${TARGET_URL%/}"
 DOMAIN=$(echo "$TARGET_URL" | sed -E 's|https?://||' | cut -d/ -f1 | sed 's/:.*//')
 
 # ── Helpers ───────────────────────────────────────────────────
-section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}"; }
+section() { echo -e "\n${PRI}${BAR}${RST}\n${SEC}  $1${RST}\n${PRI}${BAR}${RST}\n"; }
 row()     { printf "  ${BLD}%-38s${RST} %s\n" "$1" "$2"; }
 good()    { echo -e "  ${GRN}✓ $1${RST}"; }
 warn()    { echo -e "  ${YLW}⚠ $1${RST}"; }
@@ -64,13 +69,14 @@ REPORT_TMPFILE="$(mktemp)"
 exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
+sleep 0.1  # give tail time to open the file before writing
 
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}          WP External Performance Diagnostics             ${PRI}│"
 echo -e "  │${SEC}                  wp-perf-check.sh                        ${PRI}│"
-echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
+echo -e "  │${SEC}                By Robyn × Claude AI                      ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
@@ -526,70 +532,31 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 6. WORDPRESS-SPECIFIC CHECKS
+# 6. SECURITY HEADERS
 # ─────────────────────────────────────────────────────────────
-section "6. WORDPRESS DETECTION"
+section "6. SECURITY HEADERS"
 
-note "Probing for WordPress signals..."
+check_sec_header() {
+    local h="$1" desc="$2"
+    local val
+    val=$(get_header "$HEADERS_WARM" "$h")
+    if [[ -n "$val" ]]; then
+        good "$h: $val"
+    else
+        warn "Missing: $h — $desc"
+    fi
+}
 
-BODY=$(curl -s --max-time 15 "$TARGET_URL" 2>/dev/null || true)
-
-# WP generator tag
-WP_VER=$(echo "$BODY" | grep -o 'content="WordPress [0-9.]*"' | grep -o '[0-9.]*' | head -1 || true)
-if [[ -n "$WP_VER" ]]; then
-    warn "WordPress version exposed in meta generator: $WP_VER (consider removing)"
-else
-    good "WordPress version not exposed in meta generator"
-fi
-
-# wp-content path detection
-if echo "$BODY" | grep -q "wp-content"; then
-    good "wp-content found in source (WordPress confirmed)"
-fi
-
-# REST API
-REST_URL="${TARGET_URL}/wp-json/wp/v2"
-REST_CODE=$(curl -sI --max-time 10 -o /dev/null -w "%{http_code}" "$REST_URL" 2>/dev/null || echo "fail")
-row "WP REST API (/wp-json/wp/v2)" "$REST_CODE"
-if [[ "$REST_CODE" == "200" ]]; then
-    note "REST API is publicly accessible — ensure sensitive endpoints are protected"
-fi
-
-# WP login page
-LOGIN_CODE=$(curl -sI --max-time 10 -o /dev/null -w "%{http_code}" "${TARGET_URL}/wp-login.php" 2>/dev/null || echo "fail")
-row "wp-login.php accessible" "$LOGIN_CODE"
-if [[ "$LOGIN_CODE" == "200" ]]; then
-    note "Login page is publicly accessible (standard; consider rate limiting)"
-elif [[ "$LOGIN_CODE" == "403" || "$LOGIN_CODE" == "404" ]]; then
-    good "Login page returns $LOGIN_CODE (may be protected/relocated)"
-fi
-
-# xmlrpc
-XMLRPC_CODE=$(curl -sI --max-time 10 -o /dev/null -w "%{http_code}" "${TARGET_URL}/xmlrpc.php" 2>/dev/null || echo "fail")
-row "xmlrpc.php" "$XMLRPC_CODE"
-if [[ "$XMLRPC_CODE" == "200" || "$XMLRPC_CODE" == "405" ]]; then
-    warn "xmlrpc.php is accessible ($XMLRPC_CODE) — disable if not needed"
-fi
-
-# Readme
-README_CODE=$(curl -sI --max-time 5 -o /dev/null -w "%{http_code}" "${TARGET_URL}/readme.html" 2>/dev/null || echo "fail")
-if [[ "$README_CODE" == "200" ]]; then
-    warn "readme.html accessible — may expose WordPress version"
-fi
-
-# Feed
-FEED_URL="${TARGET_URL}/feed/"
-FEED_CODE=$(curl -sI --max-time 5 -o /dev/null -w "%{http_code}" "$FEED_URL" 2>/dev/null || echo "fail")
-row "RSS Feed (/feed/)" "$FEED_CODE"
-
-# Check if WP Query Monitor or Debug Bar signals in headers
-QM_HEADER=$(get_header "$HEADERS_WARM" "x-query-monitor")
-if [[ -n "$QM_HEADER" ]]; then
-    note "Query Monitor headers detected (debug plugin active)"
-fi
+check_sec_header "x-frame-options"           "Prevents clickjacking"
+check_sec_header "x-content-type-options"    "Prevents MIME sniffing"
+check_sec_header "x-xss-protection"         "XSS filter (legacy)"
+check_sec_header "content-security-policy"  "CSP — important"
+check_sec_header "referrer-policy"          "Controls referrer info"
+check_sec_header "permissions-policy"       "Controls browser features"
+check_sec_header "strict-transport-security" "HSTS"
 
 # ─────────────────────────────────────────────────────────────
-# 7. CORE WEB VITALS VIA CRUX API
+# 7. CORE WEB VITALS (PageSpeed Insights)
 # ─────────────────────────────────────────────────────────────
 section "7. CORE WEB VITALS (PageSpeed Insights)"
 
@@ -600,23 +567,38 @@ PSI_DATA=$(curl -s --max-time 20 "$PAGESPEED_URL" 2>/dev/null || true)
 
 if [[ -n "$PSI_DATA" ]]; then
     if command -v python3 &>/dev/null; then
-        python3 - <<PYEOF
+        PSI_TMPFILE=$(mktemp)
+        printf '%s' "$PSI_DATA" > "$PSI_TMPFILE"
+        python3 - "$PSI_TMPFILE" <<'PYEOF'
 import json, sys
 
 try:
-    data = json.loads('''$PSI_DATA''')
-except:
-    print("  Could not parse PageSpeed response")
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"  Could not parse PageSpeed response: {e}")
     sys.exit(0)
 
-cats = data.get('lighthouseResult', {}).get('categories', {})
-audits = data.get('lighthouseResult', {}).get('audits', {})
+if 'error' in data:
+    err = data.get('error', {})
+    print(f"  API error {err.get('code', '')}: {err.get('message', str(err))}")
+    sys.exit(0)
+
+lhr = data.get('lighthouseResult', {})
+if not lhr:
+    print("  No Lighthouse data returned — the API may require an API key or be rate-limited")
+    sys.exit(0)
+
+cats   = lhr.get('categories', {})
+audits = lhr.get('audits', {})
 
 perf_score = cats.get('performance', {}).get('score')
 if perf_score is not None:
     score = int(perf_score * 100)
     color = '\033[32m' if score >= 90 else '\033[33m' if score >= 50 else '\033[31m'
     print(f"  {color}Performance Score: {score}/100\033[0m")
+else:
+    print("  No performance score available — response may be incomplete")
 
 # Key metrics
 metric_keys = {
@@ -638,8 +620,8 @@ for key, label in metric_keys.items():
         print(f"  {color}{label:<30}{display}\033[0m")
 
 # Opportunities
-opps = {k: v for k, v in audits.items() 
-        if v.get('details', {}).get('type') == 'opportunity' 
+opps = {k: v for k, v in audits.items()
+        if v.get('details', {}).get('type') == 'opportunity'
         and v.get('score') is not None and v.get('score') < 1
         and v.get('details', {}).get('overallSavingsMs', 0) > 100}
 
@@ -653,16 +635,16 @@ if opps:
         print(f"    ⚠ {title[:55]:<55} ~{savings:.0f}ms savings")
 
 PYEOF
+        rm -f "$PSI_TMPFILE"
     else
         note "python3 not found — install to parse PageSpeed results"
-        echo "$PSI_DATA" | grep -o '"score":[0-9.]*' | head -5 || true
     fi
 else
     warn "Could not reach PageSpeed Insights API"
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 8. ASSET SCAN (HTML source)
+# 8. ASSET ANALYSIS (from HTML source)
 # ─────────────────────────────────────────────────────────────
 section "8. ASSET ANALYSIS (from HTML source)"
 
@@ -707,7 +689,7 @@ if head_start >= 0 and head_end >= 0:
     (( BLOCKING_SCRIPTS > 2 )) && warn "$BLOCKING_SCRIPTS render-blocking scripts in <head> — add async/defer"
 
     # Lazy loading images
-    LAZY_IMGS=$(echo "$FULL_BODY" | grep -oi 'loading="lazy"' | wc -l | tr -d ' ')
+    LAZY_IMGS=$(echo "$FULL_BODY" | grep -oi 'loading="lazy"' | wc -l | tr -d ' ' || true)
     TOTAL_IMGS=$IMG_COUNT
     row "Images with lazy loading" "$LAZY_IMGS / $TOTAL_IMGS"
     if (( TOTAL_IMGS > 5 && LAZY_IMGS == 0 )); then
@@ -731,32 +713,7 @@ if head_start >= 0 and head_end >= 0:
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 9. SECURITY HEADERS
-# ─────────────────────────────────────────────────────────────
-section "9. SECURITY HEADERS"
-
-declare -A SEC_HEADERS=(
-    ["x-frame-options"]="Prevents clickjacking"
-    ["x-content-type-options"]="Prevents MIME sniffing"
-    ["x-xss-protection"]="XSS filter (legacy)"
-    ["content-security-policy"]="CSP — important"
-    ["referrer-policy"]="Controls referrer info"
-    ["permissions-policy"]="Controls browser features"
-    ["strict-transport-security"]="HSTS"
-)
-
-for h in "${!SEC_HEADERS[@]}"; do
-    val=$(get_header "$HEADERS_WARM" "$h")
-    desc="${SEC_HEADERS[$h]}"
-    if [[ -n "$val" ]]; then
-        good "$h: $val"
-    else
-        warn "Missing: $h — $desc"
-    fi
-done
-
-# ─────────────────────────────────────────────────────────────
-# 10. SUMMARY
+# 9. SUMMARY
 # ─────────────────────────────────────────────────────────────
 section "SUMMARY"
 
@@ -767,7 +724,6 @@ echo -e "  ${BLD}Key metrics:${RST}"
 row "  Cold TTFB avg"   "${AVG_COLD}ms"
 row "  Warm TTFB avg"   "${AVG_WARM}ms"
 row "  Cache speedup"   "${CACHE_SPEEDUP}%"
-[[ -n "$WP_VER" ]] && row "  WP version exposed" "$WP_VER"
 
 echo ""
 echo -e "  ${BLD}Recommendations:${RST}"
