@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================
-# wp-perf-check.sh — External WordPress Performance Checker
+# wp-frontend-diag.sh — External WordPress Frontend Diagnostics
 # =============================================================
-# Usage: ./wp-perf-check.sh https://example.com
-#        ./wp-perf-check.sh https://example.com --repeat 5
-#        ./wp-perf-check.sh https://example.com --verbose
+# Usage: ./wp-frontend-diag.sh https://example.com
+#        ./wp-frontend-diag.sh https://example.com --repeat 5
+#        ./wp-frontend-diag.sh https://example.com --verbose
 #
 # Requirements (auto-detected): curl, dig, openssl, jq (optional)
 # All reads. Zero writes. Safe for production.
@@ -14,8 +14,9 @@ set -euo pipefail
 
 # ── Colours ──────────────────────────────────────────────────
 RED='\033[0;31m'; YLW='\033[0;33m'; GRN='\033[0;32m'
-PRI='\033[1;38;2;182;29;111m'   # #b61d6f — primary (bars)
+PRI='\033[1;38;2;182;29;111m'   # #b61d6f — primary (bars/headings)
 SEC='\033[1;38;2;255;255;255m'  # #ffffff — secondary (titles)
+GRY='\033[3;38;2;136;146;160m'  # grey italic — notes/info
 BLD='\033[1m';    RST='\033[0m'
 BAR="$(printf '─%.0s' {1..64})"
 
@@ -54,7 +55,7 @@ row()     { printf "  ${BLD}%-38s${RST} %s\n" "$1" "$2"; }
 good()    { echo -e "  ${GRN}✓ $1${RST}"; }
 warn()    { echo -e "  ${YLW}⚠ $1${RST}"; }
 bad()     { echo -e "  ${RED}✗ $1${RST}"; }
-note()    { echo -e "  ${SEC}↳ $1${RST}"; }
+note()    { echo -e "  ${GRY}↳ $1${RST}"; }
 require() {
     if ! command -v "$1" &>/dev/null; then
         warn "$1 not found — skipping related checks. Install with: brew install $1"
@@ -64,7 +65,9 @@ require() {
 }
 
 # ── File output setup ────────────────────────────────────────
-REPORT_FILENAME="wp-perf-check-$(date -u '+%Y-%m-%d-%H%M%S')-${DOMAIN}.txt"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPORT_BASENAME="wp-frontend-diag-$(date -u '+%Y-%m-%d-%H%M%S')-${DOMAIN}.txt"
+REPORT_FILENAME="${SCRIPT_DIR}/${REPORT_BASENAME}"
 REPORT_TMPFILE="$(mktemp)"
 exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 tail -f "$REPORT_TMPFILE" >&3 &
@@ -75,7 +78,7 @@ sleep 0.1  # give tail time to open the file before writing
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
 echo -e "  │${SEC}          WP External Performance Diagnostics             ${PRI}│"
-echo -e "  │${SEC}                  wp-perf-check.sh                        ${PRI}│"
+echo -e "  │${SEC}                wp-frontend-diag.sh                       ${PRI}│"
 echo -e "  │${SEC}                By Robyn × Claude AI                      ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
@@ -238,7 +241,7 @@ for i in $(seq 1 "$REPEAT"); do
         -w "%{time_starttransfer}" \
         -o /dev/null \
         "${TARGET_URL}?${CB_PARAM}" 2>/dev/null || echo "0")
-    TTFB_MS=$(awk "BEGIN {printf \"%.0f\", $TTFB_VAL * 1000}")
+    TTFB_MS=$(awk -v n="$TTFB_VAL" 'BEGIN {printf "%.0f", n * 1000}')
     TTFBS+=("$TTFB_MS")
     $VERBOSE && row "  Cold sample $i" "${TTFB_MS}ms"
 done
@@ -249,7 +252,7 @@ for i in $(seq 1 "$REPEAT"); do
         -w "%{time_starttransfer}" \
         -o /dev/null \
         "$TARGET_URL" 2>/dev/null || echo "0")
-    TTFB_MS=$(awk "BEGIN {printf \"%.0f\", $TTFB_VAL * 1000}")
+    TTFB_MS=$(awk -v n="$TTFB_VAL" 'BEGIN {printf "%.0f", n * 1000}')
     TTFBS_WARM+=("$TTFB_MS")
     $VERBOSE && row "  Warm sample $i" "${TTFB_MS}ms"
 done
@@ -289,7 +292,7 @@ echo -e "  Warm TTFB rating:  $(ttfb_status $AVG_WARM)"
 
 CACHE_SPEEDUP=0
 if (( AVG_COLD > 0 )); then
-    CACHE_SPEEDUP=$(awk "BEGIN {printf \"%.0f\", (($AVG_COLD - $AVG_WARM) / $AVG_COLD) * 100}")
+    CACHE_SPEEDUP=$(awk -v c="$AVG_COLD" -v w="$AVG_WARM" 'BEGIN {printf "%.0f", ((c - w) / c) * 100}')
 fi
 row "Cache speedup" "${CACHE_SPEEDUP}%"
 if (( CACHE_SPEEDUP > 40 )); then good "Significant cache speedup detected";
@@ -307,7 +310,7 @@ CURL_OUT=$(curl -s --max-time 15 \
     "$TARGET_URL" 2>/dev/null || true)
 
 parse_curl() { echo "$CURL_OUT" | grep "^$1:" | cut -d: -f2; }
-to_ms()      { awk "BEGIN {printf \"%.1f\", $1 * 1000}"; }
+to_ms()      { awk -v n="$1" 'BEGIN {printf "%.1f", n * 1000}'; }
 
 DNS_T=$(parse_curl namelookup)
 CONNECT_T=$(parse_curl connect)
@@ -329,8 +332,8 @@ CTYPE=$(parse_curl content_type)
 [[ -n "$TTFB_T" ]]    && row "TTFB"            "$(to_ms $TTFB_T)ms  (cumulative)"
 [[ -n "$TOTAL_T" ]]   && row "Total"           "$(to_ms $TOTAL_T)ms"
 if [[ -n "$DL_SIZE" && "$DL_SIZE" != "0" ]]; then
-    DL_SIZE_KB=$(awk "BEGIN {printf \"%.1f\", $DL_SIZE / 1024}")
-    DL_SPEED_KB=$(awk "BEGIN {printf \"%.1f\", $DL_SPEED / 1024}")
+    DL_SIZE_KB=$(awk -v n="$DL_SIZE" 'BEGIN {printf "%.1f", n / 1024}')
+    DL_SPEED_KB=$(awk -v n="$DL_SPEED" 'BEGIN {printf "%.1f", n / 1024}')
     row "Response size"   "${DL_SIZE_KB} KB"
     row "Download speed"  "${DL_SPEED_KB} KB/s"
 fi
@@ -513,23 +516,6 @@ elif [[ "$AGE" == "0" ]]; then
     warn "Age: 0 — likely a fresh cache miss"
 fi
 
-# Server detection
-SERVER=$(get_header "$HEADERS_WARM" "server")
-XPOWERED=$(get_header "$HEADERS_WARM" "x-powered-by")
-[[ -n "$SERVER" ]]  && row "Server software" "$SERVER"
-[[ -n "$XPOWERED" ]] && row "X-Powered-By" "$XPOWERED"
-
-# Gzip/Brotli
-note "Checking compression..."
-ENCODING=$(curl -sI --max-time 10 \
-    -H "Accept-Encoding: br, gzip, deflate" \
-    -H "User-Agent: WPPerfDiag/1.0" \
-    "$TARGET_URL" 2>/dev/null | grep -i "content-encoding" | head -1 | tr -d '\r' || true)
-if [[ -n "$ENCODING" ]]; then
-    good "Compression active: $ENCODING"
-else
-    warn "No Content-Encoding header — compression may not be enabled"
-fi
 
 # ─────────────────────────────────────────────────────────────
 # 6. SECURITY HEADERS
@@ -560,9 +546,22 @@ check_sec_header "strict-transport-security" "HSTS"
 # ─────────────────────────────────────────────────────────────
 section "7. CORE WEB VITALS (PageSpeed Insights)"
 
-PAGESPEED_URL="https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TARGET_URL'))" 2>/dev/null || echo "$TARGET_URL")&strategy=mobile"
+# Load API key from pagespeed-api-key.txt if present alongside the script
+PAGESPEED_API_KEY=""
+_KEY_FILE="${SCRIPT_DIR}/pagespeed-api-key.txt"
+if [[ -f "$_KEY_FILE" ]]; then
+    PAGESPEED_API_KEY=$(tr -d '[:space:]' < "$_KEY_FILE")
+fi
 
-note "Querying PageSpeed Insights API (no API key — limited data)..."
+_PSI_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TARGET_URL'))" 2>/dev/null || echo "$TARGET_URL")
+PAGESPEED_URL="https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${_PSI_ENCODED}&strategy=mobile"
+[[ -n "$PAGESPEED_API_KEY" ]] && PAGESPEED_URL="${PAGESPEED_URL}&key=${PAGESPEED_API_KEY}"
+
+if [[ -n "$PAGESPEED_API_KEY" ]]; then
+    note "Querying PageSpeed Insights API (API key loaded from pagespeed-api-key.txt)..."
+else
+    note "Querying PageSpeed Insights API (no API key — add pagespeed-api-key.txt to remove rate limits)..."
+fi
 PSI_DATA=$(curl -s --max-time 20 "$PAGESPEED_URL" 2>/dev/null || true)
 
 if [[ -n "$PSI_DATA" ]]; then
@@ -580,8 +579,14 @@ except Exception as e:
     sys.exit(0)
 
 if 'error' in data:
-    err = data.get('error', {})
-    print(f"  API error {err.get('code', '')}: {err.get('message', str(err))}")
+    err  = data.get('error', {})
+    code = err.get('code', '')
+    msg  = err.get('message', str(err))
+    if str(code) == '429':
+        print(f"  \033[33m⚠ PageSpeed API quota exceeded (free tier daily limit reached)\033[0m")
+        print(f"  \033[3;38;2;136;146;160m↳ Add a Google PageSpeed Insights API key for more requests\033[0m")
+    else:
+        print(f"  \033[31m✗ API error {code}: {msg}\033[0m")
     sys.exit(0)
 
 lhr = data.get('lighthouseResult', {})
@@ -646,6 +651,11 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 8. ASSET ANALYSIS (from HTML source)
 # ─────────────────────────────────────────────────────────────
+# Initialise counters so summary can reference them even if body fetch fails
+SCRIPT_COUNT=0; STYLE_COUNT=0; IMG_COUNT=0; IFRAME_COUNT=0
+BLOCKING_SCRIPTS=0; LAZY_IMGS=0; HTML_SIZE=0; HTML_SIZE_KB="0.0"
+GOOGLE_FONTS_WARN=false
+
 section "8. ASSET ANALYSIS (from HTML source)"
 
 note "Analysing linked assets from homepage source..."
@@ -671,7 +681,8 @@ if [[ -n "$FULL_BODY" ]]; then
 
     # HTML size
     HTML_SIZE=${#FULL_BODY}
-    row "HTML body size" "$(awk "BEGIN {printf \"%.1f\", $HTML_SIZE/1024}")KB"
+    HTML_SIZE_KB=$(awk -v n="$HTML_SIZE" 'BEGIN {printf "%.1f", n/1024}')
+    row "HTML body size" "${HTML_SIZE_KB}KB"
     (( HTML_SIZE > 200000 )) && warn "Large HTML document (>200KB)"
 
     # Render-blocking scripts in <head>
@@ -699,6 +710,7 @@ if head_start >= 0 and head_end >= 0:
     # Google Fonts check
     if echo "$FULL_BODY" | grep -qi "fonts.googleapis.com\|fonts.gstatic.com"; then
         warn "Google Fonts loaded externally — consider self-hosting for performance"
+        GOOGLE_FONTS_WARN=true
     fi
 
     # Third-party domains
@@ -715,72 +727,135 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 9. SUMMARY
 # ─────────────────────────────────────────────────────────────
-section "SUMMARY"
+section "9. SUMMARY"
 
-echo ""
-
-# Quick wins
-echo -e "  ${BLD}Key metrics:${RST}"
+# Key metrics
+echo -e "  ${PRI}Key metrics:${RST}"
 row "  Cold TTFB avg"   "${AVG_COLD}ms"
 row "  Warm TTFB avg"   "${AVG_WARM}ms"
 row "  Cache speedup"   "${CACHE_SPEEDUP}%"
-
 echo ""
-echo -e "  ${BLD}Recommendations:${RST}"
+
+# ── Collect findings ─────────────────────────────────────────
+POSITIVES=()
+ISSUES=()
 
 # TTFB
 if (( AVG_COLD > 1500 )); then
-    bad  "Very slow cold TTFB (${AVG_COLD}ms) — investigate server/PHP/DB performance"
+    ISSUES+=("Very slow cold TTFB (${AVG_COLD}ms) — investigate server/PHP/DB performance")
 elif (( AVG_COLD > 600 )); then
-    warn "Slow cold TTFB (${AVG_COLD}ms) — check for slow queries, no OPcache, or heavy plugins"
+    ISSUES+=("Slow cold TTFB (${AVG_COLD}ms) — check for slow queries, no OPcache, or heavy plugins")
 else
-    good "Cold TTFB acceptable (${AVG_COLD}ms)"
+    POSITIVES+=("Cold TTFB acceptable (${AVG_COLD}ms)")
 fi
 
-if (( CACHE_SPEEDUP < 10 )); then
-    warn "Minimal cache speedup (${CACHE_SPEEDUP}%) — page caching may not be effective"
-elif (( CACHE_SPEEDUP > 50 )); then
-    good "Strong cache speedup (${CACHE_SPEEDUP}%) — page caching is working well"
+# Cache speedup
+if (( CACHE_SPEEDUP > 50 )); then
+    POSITIVES+=("Strong cache speedup (${CACHE_SPEEDUP}%) — page caching is working well")
+elif (( CACHE_SPEEDUP < 10 )); then
+    ISSUES+=("Minimal cache speedup (${CACHE_SPEEDUP}%) — page caching may not be effective")
 fi
 
+# Batcache (x-nananana)
+X_NAN_WARM=$(get_header "$HEADERS_WARM" "x-nananana")
+if echo "$X_NAN_WARM" | grep -qi "Batcache-Hit"; then
+    POSITIVES+=("Batcache confirmed HIT")
+elif echo "$X_NAN_WARM" | grep -qi "Batcache-Set"; then
+    ISSUES+=("Batcache SET — will HIT on next request")
+elif [[ -z "$X_NAN_WARM" ]]; then
+    ISSUES+=("x-nananana absent — Batcache not confirmed")
+fi
+
+# Edge cache (x-ac)
+X_AC_WARM=$(get_header "$HEADERS_WARM" "x-ac")
+if echo "$X_AC_WARM" | grep -qi "HIT"; then
+    POSITIVES+=("Edge cache confirmed HIT")
+elif echo "$X_AC_WARM" | grep -qi "BYPASS"; then
+    ISSUES+=("Edge cache BYPASS — investigate why caching is skipped")
+elif echo "$X_AC_WARM" | grep -qi "MISS"; then
+    ISSUES+=("Edge cache MISS — not yet cached at edge")
+elif [[ -z "$X_AC_WARM" ]]; then
+    ISSUES+=("x-ac absent — edge cache not confirmed")
+fi
+
+# Section 8 asset warnings
+(( SCRIPT_COUNT     > 20 )) && ISSUES+=("High number of scripts (${SCRIPT_COUNT}) — check for bloat")
+(( STYLE_COUNT      > 12 )) && ISSUES+=("High number of stylesheets (${STYLE_COUNT})")
+(( BLOCKING_SCRIPTS >  2 )) && ISSUES+=("${BLOCKING_SCRIPTS} render-blocking scripts in <head> — add async/defer")
+(( IMG_COUNT > 5 && LAZY_IMGS == 0 )) && ISSUES+=("No lazy-loaded images — consider adding loading=\"lazy\"")
+$GOOGLE_FONTS_WARN          && ISSUES+=("Google Fonts loaded externally — consider self-hosting for performance")
+(( HTML_SIZE > 200000 ))    && ISSUES+=("Large HTML document (${HTML_SIZE_KB}KB)")
+
+# ── Output ───────────────────────────────────────────────────
+if (( ${#POSITIVES[@]} > 0 )); then
+    echo -e "  ${PRI}✓ Positives:${RST}"
+    for p in "${POSITIVES[@]}"; do good "$p"; done
+    echo ""
+fi
+
+if (( ${#ISSUES[@]} > 0 )); then
+    echo -e "  ${PRI}⚠ Issues/Recommendations:${RST}"
+    for issue in "${ISSUES[@]}"; do warn "$issue"; done
+else
+    good "No major issues detected!"
+fi
+
+# Cloudflare note (informational)
 CF_WARM=$(get_header "$HEADERS_WARM" "cf-cache-status")
 [[ -z "$CF_WARM" ]] && note "No Cloudflare headers — not on Cloudflare (or CF not proxying)"
 
-# x-nananana summary
-X_NAN_WARM=$(get_header "$HEADERS_WARM" "x-nananana")
-if [[ -z "$X_NAN_WARM" ]]; then
-    warn "x-nananana absent — Batcache not confirmed"
-elif echo "$X_NAN_WARM" | grep -qi "Batcache-Hit"; then
-    good "Batcache confirmed HIT"
-elif echo "$X_NAN_WARM" | grep -qi "Batcache-Set"; then
-    warn "Batcache SET — will HIT on next request"
-fi
-
-# x-ac summary
-X_AC_WARM=$(get_header "$HEADERS_WARM" "x-ac")
-if [[ -z "$X_AC_WARM" ]]; then
-    warn "x-ac absent — edge cache not confirmed"
-elif echo "$X_AC_WARM" | grep -qi "HIT"; then
-    good "Edge cache confirmed HIT"
-elif echo "$X_AC_WARM" | grep -qi "MISS"; then
-    warn "Edge cache MISS — not yet cached at edge"
-elif echo "$X_AC_WARM" | grep -qi "BYPASS"; then
-    bad "Edge cache BYPASS — investigate why caching is skipped"
-fi
-
 echo ""
-echo -e "  ${SEC}Next steps:${RST}"
-echo "    • Run wp-perf-diag.php server-side for DB/plugin/object cache detail"
-echo "    • Use Query Monitor plugin for per-request query analysis"
-echo "    • Check GTmetrix / WebPageTest for waterfall breakdown"
-echo "    • Review PageSpeed Insights for full Core Web Vitals data"
-echo ""
-row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo -e "  ${GRY}↳ Next steps:${RST}"
+echo -e "  ${GRY}  • Run wp-perf-diag.php server-side for DB/plugin/object cache detail${RST}"
+echo -e "  ${GRY}  • Use Query Monitor plugin for per-request query analysis${RST}"
+echo -e "  ${GRY}  • Check GTmetrix / WebPageTest for waterfall breakdown${RST}"
+echo -e "  ${GRY}  • Review PageSpeed Insights for full Core Web Vitals data${RST}"
 echo ""
 
 # ── Save report ───────────────────────────────────────────────
-kill "$TAIL_PID" 2>/dev/null; wait "$TAIL_PID" 2>/dev/null; sleep 0.1
-exec 1>&3 3>&-
-sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
-rm -f "$REPORT_TMPFILE"
-printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
+kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true; sleep 0.2
+# Restore BOTH stdout and stderr to the terminal so python errors are visible
+exec 1>&3 2>&3 3>&-
+
+# Write the processing script to its own temp file — avoids stdin/heredoc
+# ambiguity that exists when stdout/stderr have been redirected mid-script
+# (plain mktemp — BSD mktemp on macOS does not support filename suffixes)
+_PY=$(mktemp)
+cat > "$_PY" <<'PYEOF'
+import sys, re
+
+with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+    content = f.read()
+
+# Strip ANSI escape codes
+content = re.sub(r'\033\[[0-9;]*m', '', content)
+
+# Replace box-drawing and symbol characters with ASCII equivalents
+# (mirrors the strtr map in wp-perf-diag.php)
+replacements = {
+    '┌': '+', '─': '-', '┐': '+',
+    '└': '+', '┘': '+', '│': '|',
+    '—': '--', '–': '-',
+    '→': '->',
+    '…': '...',
+    '×': 'x',
+    '↳': '>',
+    '⚠': '!',
+    '✓': '+',
+    '✗': 'x',
+    '•': '*',
+}
+for char, replacement in replacements.items():
+    content = content.replace(char, replacement)
+
+with open(sys.argv[2], 'w', encoding='utf-8') as f:
+    f.write(content)
+PYEOF
+
+if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+    rm -f "$REPORT_TMPFILE" "$_PY"
+    printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_BASENAME"
+else
+    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    rm -f "$REPORT_TMPFILE" "$_PY"
+fi
