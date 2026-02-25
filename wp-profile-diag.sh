@@ -64,28 +64,72 @@ exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 # Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
-# wp_profile() runs a wp profile subcommand and captures its output.
-# Uses a temp file instead of $() command substitution: $() creates a pipe
-# which some versions of wp-cli/profile-command treat as non-TTY and ignore
-# --format=table, falling back to plain/CSV output. Writing to a temp file
-# and using cat preserves table formatting reliably.
-# stderr is captured separately so errors are shown cleanly, not mixed
-# into table data. WP_PROFILE_LAST stores the output for summary parsing.
+# format_as_table() reads CSV from stdin and renders a bordered ASCII table.
+# Uses --format=csv (reliable regardless of WP-CLI version or TTY context)
+# rather than --format=table, which many profile-command versions ignore in
+# non-TTY contexts, falling back to plain space-separated output.
+format_as_table() {
+    awk '
+    function rpad(s, n,    r, i) {
+        r = s
+        for (i = length(s); i < n; i++) r = r " "
+        return r
+    }
+    function hline(    s, i, j, d) {
+        s = "+"
+        for (i = 1; i <= maxcols; i++) {
+            d = ""
+            for (j = 0; j < w[i]+2; j++) d = d "-"
+            s = s d "+"
+        }
+        return s
+    }
+    BEGIN { FS=","; maxcols=0; nr=0 }
+    {
+        nr++
+        for (i = 1; i <= NF; i++) {
+            v = $i
+            if (substr(v,1,1) == "\"" && substr(v,length(v),1) == "\"")
+                v = substr(v, 2, length(v)-2)
+            rows[nr, i] = v
+            if (length(v) > w[i]) w[i] = length(v)
+        }
+        if (NF > maxcols) maxcols = NF
+    }
+    END {
+        if (nr == 0) exit
+        print hline()
+        for (r = 1; r <= nr; r++) {
+            line = "|"
+            for (i = 1; i <= maxcols; i++) line = line " " rpad(rows[r, i], w[i]) " |"
+            print line
+            if (r == 1) print hline()
+        }
+        print hline()
+    }
+    '
+}
+# wp_profile() runs a wp profile subcommand and renders output as a bordered
+# ASCII table. Uses --format=csv (reliable across all WP-CLI versions and TTY
+# contexts) then converts via format_as_table(). stderr is captured separately
+# so errors are shown cleanly. WP_PROFILE_LAST stores the result for parsing.
 wp_profile() {
-    local tmpout
+    local tmpout tmpfmt
     tmpout=$(mktemp)
-    if wp --no-color "$@" --format=table > "$tmpout" 2>/tmp/wp_profile_err; then
-        cat "$tmpout"
-        WP_PROFILE_LAST=$(cat "$tmpout")
-        rm -f "$tmpout"
-        return 0
+    tmpfmt=$(mktemp)
+    if wp --no-color "$@" --format=csv > "$tmpout" 2>/tmp/wp_profile_err; then
+        format_as_table < "$tmpout" > "$tmpfmt"
+        cat "$tmpfmt"
+        WP_PROFILE_LAST=$(cat "$tmpfmt")
     else
         local err
         err=$(cat /tmp/wp_profile_err 2>/dev/null)
         [[ -n "$err" ]] && warn "wp profile error: $err"
-        rm -f "$tmpout"
+        rm -f "$tmpout" "$tmpfmt"
         return 1
     fi
+    rm -f "$tmpout" "$tmpfmt"
+    return 0
 }
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
