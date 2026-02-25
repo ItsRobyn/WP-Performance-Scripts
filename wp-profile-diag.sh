@@ -265,7 +265,7 @@ note "Profiling WordPress load stages (this makes a real request)..."
 note "Stages: bootstrap → main_query → template"
 echo ""
 
-if wp_profile profile stage --all --orderby=time; then
+if wp_profile profile stage --orderby=time; then
     STAGE_DATA="$WP_PROFILE_LAST"
     STAGE_COUNT=$(echo "$STAGE_DATA" | grep -c '^| ' || true)
     echo ""
@@ -438,13 +438,48 @@ echo ""
 echo "    # Profile the template stage specifically:"
 echo "    wp --no-color profile hook template_redirect --orderby=time"
 echo ""
-row "Completed at" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
-echo ""
-
 # ── Save report ───────────────────────────────────────────────
-# Stop the tail, restore stdout, strip ANSI for the clean saved file
-kill "$TAIL_PID" 2>/dev/null; wait "$TAIL_PID" 2>/dev/null; sleep 0.1
-exec 1>&3 3>&-
-sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME"
-rm -f "$REPORT_TMPFILE"
-printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
+kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true; sleep 0.2
+# Restore both stdout and stderr to the terminal so python errors are visible
+exec 1>&3 2>&3 3>&-
+
+# Write the processing script to its own temp file — avoids stdin/heredoc
+# ambiguity that exists when stdout/stderr have been redirected mid-script
+_PY=$(mktemp)
+cat > "$_PY" <<'PYEOF'
+import sys, re
+
+with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+    content = f.read()
+
+# Strip ANSI escape codes
+content = re.sub(r'\033\[[0-9;]*m', '', content)
+
+# Replace box-drawing and symbol characters with ASCII equivalents
+replacements = {
+    '┌': '+', '─': '-', '┐': '+',
+    '└': '+', '┘': '+', '│': '|',
+    '—': '--', '–': '-',
+    '→': '->',
+    '…': '...',
+    '×': 'x',
+    '↳': '>',
+    '⚠': '!',
+    '✓': '+',
+    '✗': 'x',
+    '•': '*',
+}
+for char, replacement in replacements.items():
+    content = content.replace(char, replacement)
+
+with open(sys.argv[2], 'w', encoding='utf-8') as f:
+    f.write(content)
+PYEOF
+
+if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+    rm -f "$REPORT_TMPFILE" "$_PY"
+    printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
+else
+    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    rm -f "$REPORT_TMPFILE" "$_PY"
+fi
