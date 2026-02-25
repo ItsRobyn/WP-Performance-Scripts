@@ -387,9 +387,13 @@ $index_issues = 0;
 foreach ($index_checks as $table => $required_cols) {
     $indexes = $wpdb->get_results("SHOW INDEX FROM `$table`");
     if ($indexes === null) continue; // table may not exist
+    // Check both Key_name (index name) and Column_name (indexed column):
+    // some entries are standalone index names (e.g. comment_approved_date_gmt),
+    // others are column names covered by a composite index (e.g. post_status in type_status_date).
     $index_keys = array_unique(array_column($indexes, 'Key_name'));
+    $index_cols = array_unique(array_column($indexes, 'Column_name'));
     foreach ($required_cols as $col) {
-        if (!in_array($col, $index_keys)) {
+        if (!in_array($col, $index_keys) && !in_array($col, $index_cols)) {
             warn("Missing index `$col` on `$table`");
             $index_issues++;
         }
