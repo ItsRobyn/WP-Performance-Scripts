@@ -455,8 +455,15 @@ row('Batcache (advanced-cache.php)', $is_batcache ? 'Present' : ($batcache_activ
 $bc_customised = false; // initialised here so it's available in the summary
 if ($is_batcache) {
     $bc_max_age = $bc_seconds = $bc_times = null;
-    $wp_config_src = file_exists(ABSPATH . 'wp-config.php')
-        ? file_get_contents(ABSPATH . 'wp-config.php') : '';
+    // Mirror WordPress's own wp-config.php discovery: check ABSPATH first,
+    // then one level up (common when WP core is in a subdirectory, e.g. Pressable).
+    $wp_config_path = '';
+    if (file_exists(ABSPATH . 'wp-config.php')) {
+        $wp_config_path = ABSPATH . 'wp-config.php';
+    } elseif (file_exists(dirname(ABSPATH) . '/wp-config.php')) {
+        $wp_config_path = dirname(ABSPATH) . '/wp-config.php';
+    }
+    $wp_config_src = $wp_config_path ? file_get_contents($wp_config_path) : '';
     if ($wp_config_src) {
         if (preg_match('/max_age\s*[=\[\']+\s*["\']?(\d+)/', $wp_config_src, $m)) $bc_max_age = (int)$m[1];
         if (preg_match('/\bseconds\s*[=\[\']+\s*["\']?(\d+)/',  $wp_config_src, $m)) $bc_seconds = (int)$m[1];
@@ -1747,6 +1754,7 @@ if (isset($php_log_size) && $php_log_size > 10485760)
 // Caching
 if ($opcache_enabled)            $wins[] = 'OPcache is enabled';
 if ($batcache_hit)               $wins[] = 'Batcache is working — confirmed HIT on warm request (x-nananana)';
+if ($is_batcache && $bc_customised) $wins[] = 'Batcache cache lifetime extended in wp-config.php (' . implode(', ', $bc_parts ?? []) . ')';
 if ($edge_hit)                   $wins[] = 'Edge cache is working — confirmed HIT (x-ac)';
 
 // Performance

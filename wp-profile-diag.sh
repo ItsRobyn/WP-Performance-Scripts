@@ -273,7 +273,7 @@ else
 fi
 
 # ── Summary ───────────────────────────────────────────────────
-section "SUMMARY & NEXT STEPS"
+section "SUMMARY & RECOMMENDATIONS"
 
 # ── Analysis ──────────────────────────────────────────────────
 WINS=()
