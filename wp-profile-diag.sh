@@ -264,9 +264,7 @@ good "wp profile command is available"
 
 # Initialise analysis vars — populated by wp_profile() calls below
 STAGE_DATA=""; STAGE_COUNT=0; TOTAL_CALLBACKS=0
-HOOK_ALL_DATA=""; HOOK_ALL_COUNT=0
 SPOTLIGHT_DATA=""; SPOTLIGHT_COUNT=0
-HOOK_WP_DATA=""; HOOK_WP_COUNT=0
 WP_PROFILE_LAST=""
 
 # ── Run profile ───────────────────────────────────────────────
@@ -307,52 +305,98 @@ else
     note "Some managed hosts block loopback requests"
 fi
 
-# ── Hook-level breakdown ──────────────────────────────────────
-section "6. WP PROFILE — HOOK BREAKDOWN (bootstrap stage)"
+# ── Per-stage drill-downs ─────────────────────────────────────
+section "6. WP PROFILE — STAGE DRILL-DOWN: BOOTSTRAP"
 
-note "Profiling all hooks during bootstrap — shows which hooks consume the most time..."
+note "All hooks within the bootstrap stage — plugin init, autoloaders, CPTs, taxonomies..."
 echo ""
 
-if wp_profile profile hook --all --orderby=time; then
-    HOOK_ALL_DATA="$WP_PROFILE_LAST"
-    HOOK_ALL_COUNT=$(echo "$HOOK_ALL_DATA" | grep -c '^| ' || true)
+if wp_profile profile stage bootstrap --orderby=time; then
     echo ""
-    note "Total hooks shown: ${HOOK_ALL_COUNT}"
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
 else
-    warn "wp profile hook failed"
-    note "This requires a working loopback HTTP connection"
+    warn "wp profile stage bootstrap failed"
 fi
 
-# ── Spotlight — slow hooks only ───────────────────────────────
-section "7. WP PROFILE — SPOTLIGHT (slowest hooks ≥1ms)"
+section "7. WP PROFILE — STAGE DRILL-DOWN: MAIN QUERY"
 
-note "Filtering to hooks that took 1ms or more — easier to spot real bottlenecks..."
+note "All hooks within the main_query stage — query vars, post retrieval, template selection..."
+echo ""
+
+if wp_profile profile stage main_query --orderby=time; then
+    echo ""
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+else
+    warn "wp profile stage main_query failed"
+fi
+
+section "8. WP PROFILE — STAGE DRILL-DOWN: TEMPLATE"
+
+note "All hooks within the template stage — rendering, shortcodes, widgets, footer..."
+echo ""
+
+if wp_profile profile stage template --orderby=time; then
+    echo ""
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+else
+    warn "wp profile stage template failed"
+fi
+
+# ── Spotlight sections ────────────────────────────────────────
+section "9. WP PROFILE — SPOTLIGHT: BOOTSTRAP HOOKS (≥1ms)"
+
+note "Slow hooks (≥1ms) within the bootstrap stage only..."
+echo ""
+
+if wp_profile profile hook --spotlight --orderby=time; then
+    echo ""
+    note "Slow hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+else
+    warn "wp profile hook --spotlight failed"
+fi
+
+section "10. WP PROFILE — SPOTLIGHT: ALL STAGES (≥1ms)"
+
+note "Slow hooks (≥1ms) across all WordPress load stages — the most actionable view..."
 echo ""
 
 if wp_profile profile hook --all --spotlight --orderby=time; then
     SPOTLIGHT_DATA="$WP_PROFILE_LAST"
     SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     echo ""
-    note "Total slow hooks shown: ${SPOTLIGHT_COUNT}"
+    note "Slow hooks shown: $(( ${SPOTLIGHT_COUNT} - 1 ))"
 else
-    warn "wp profile hook --spotlight failed"
+    warn "wp profile hook --all --spotlight failed"
 fi
 
-# ── Hook breakdown for wp (main query) stage ─────────────────
-section "8. WP PROFILE — HOOK BREAKDOWN (wp stage / main query)"
-
-note "Profiling hooks during the main query stage..."
-echo ""
-
-if wp_profile profile hook wp --orderby=time; then
-    HOOK_WP_DATA="$WP_PROFILE_LAST"
-    HOOK_WP_COUNT=$(echo "$HOOK_WP_DATA" | grep -c '^| ' || true)
+# ── Specific hook spotlight sections ──────────────────────────
+# profile_hook_spotlight <section_num> <hook_name> <description>
+profile_hook_spotlight() {
+    local secnum="$1" hookname="$2" hooknote="$3"
+    section "${secnum}. WP PROFILE — HOOK: ${hookname}"
+    note "$hooknote"
     echo ""
-    note "Total hooks shown: ${HOOK_WP_COUNT}"
-else
-    warn "wp profile hook wp failed"
-    note "The 'wp' stage runs after query vars are set — usually where template logic fires"
-fi
+    if wp_profile profile hook "$hookname" --spotlight --orderby=time; then
+        local hcount
+        hcount=$(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true)
+        echo ""
+        if [[ "${hcount:-0}" -le 1 ]]; then
+            note "No callbacks on '${hookname}' exceeded 1ms"
+        else
+            note "Slow callbacks shown: $(( hcount - 1 ))"
+        fi
+    else
+        warn "wp profile hook ${hookname} --spotlight failed"
+    fi
+}
+
+profile_hook_spotlight 11 "init"             "Fires on every request — plugins register CPTs, taxonomies, REST routes, shortcodes here"
+profile_hook_spotlight 12 "plugins_loaded"   "Plugin bootstrap — runs immediately after all plugins are loaded"
+profile_hook_spotlight 13 "rest_api_init"    "REST route registration — can be slow even on frontend requests"
+profile_hook_spotlight 14 "wp_enqueue_scripts" "Script and style registration — slow here indicates unnecessary asset loading"
+profile_hook_spotlight 15 "wp_head"          "Head output — meta tags, inline scripts, dequeued assets added by plugins"
+profile_hook_spotlight 16 "wp_footer"        "Footer output — deferred scripts, analytics, chat widgets, etc."
+profile_hook_spotlight 17 "pre_get_posts"    "Query modification — common source of N+1 queries and slow custom queries"
 
 # ── Summary ───────────────────────────────────────────────────
 section "SUMMARY & RECOMMENDATIONS"
@@ -411,10 +455,10 @@ if [[ -n "${STAGE_DATA:-}" ]]; then
     check_stage "template"   "$TEMPLATE_T"
 fi
 
-# Count spotlight hooks (slow hooks ≥1ms) — fewer is better
+# Count spotlight hooks (slow hooks ≥1ms) — subtract 1 for the header row
 if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
-    SLOW_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
-    if [[ "$SLOW_COUNT" -eq 0 ]]; then
+    SLOW_COUNT=$(( $(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true) - 1 ))
+    if [[ "$SLOW_COUNT" -le 0 ]]; then
         WINS+=("No hooks exceeded 1ms — excellent hook performance")
     elif [[ "$SLOW_COUNT" -le 5 ]]; then
         WINS+=("Only ${SLOW_COUNT} hook(s) exceeded 1ms — generally healthy")
@@ -424,11 +468,21 @@ if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
         ISSUES+=("${SLOW_COUNT} hooks exceeded 1ms — significant hook overhead detected")
     fi
 
-    # Surface the single slowest hook by name
-    SLOWEST_HOOK=$(echo "$SPOTLIGHT_DATA" | grep '^| ' | head -1 | awk -F'|' '{gsub(/^ +| +$/,"",$2); print $2}')
-    SLOWEST_TIME=$(echo "$SPOTLIGHT_DATA" | grep '^| ' | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+    # Surface the single slowest hook by name from the first data row (skip header)
+    SLOWEST_HOOK=$(echo "$SPOTLIGHT_DATA" | awk -F'|' '
+        /^\| / && !hdr { hdr=1; next }
+        /^\| / { v=$2; gsub(/^ +| +$/, "", v); if (v != "") { print v; exit } }
+    ')
+    SLOWEST_TIME=$(echo "$SPOTLIGHT_DATA" | awk -F'|' '
+        /^\| / && !hdr {
+            hdr=1
+            for (i=2; i<=NF-1; i++) { v=$i; gsub(/^ +| +$/,"",v); if (v=="time") col=i }
+            next
+        }
+        col && /^\| / { v=$col; gsub(/ /,"",v); if (v!="") { print v; exit } }
+    ')
     if [[ -n "$SLOWEST_HOOK" && -n "$SLOWEST_TIME" ]]; then
-        ISSUES+=("Slowest hook: '$SLOWEST_HOOK' at ${SLOWEST_TIME}s — investigate callbacks on this hook")
+        ISSUES+=("Slowest hook: '$SLOWEST_HOOK' at ${SLOWEST_TIME} — investigate callbacks on this hook")
     fi
 fi
 
@@ -440,17 +494,6 @@ if [[ "${TOTAL_CALLBACKS:-0}" -gt 0 ]]; then
         ISSUES+=("Elevated callback count (${TOTAL_CALLBACKS} total invocations) — worth reviewing")
     else
         WINS+=("Callback count looks reasonable (${TOTAL_CALLBACKS} total invocations)")
-    fi
-fi
-# Unique hooks tracked in the full hook breakdown (excludes header row)
-if [[ -n "${HOOK_ALL_COUNT:-}" && "${HOOK_ALL_COUNT:-0}" -gt 1 ]]; then
-    UNIQUE_HOOKS=$(( HOOK_ALL_COUNT - 1 ))
-    if [[ "$UNIQUE_HOOKS" -gt 500 ]]; then
-        ISSUES+=("High unique hook count (${UNIQUE_HOOKS} distinct hooks) — many active hooks")
-    elif [[ "$UNIQUE_HOOKS" -gt 200 ]]; then
-        ISSUES+=("Elevated unique hook count (${UNIQUE_HOOKS} distinct hooks) — worth noting")
-    else
-        WINS+=("Unique hook count looks reasonable (${UNIQUE_HOOKS} distinct hooks)")
     fi
 fi
 
