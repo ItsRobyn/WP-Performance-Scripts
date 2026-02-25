@@ -387,10 +387,10 @@ $index_issues = 0;
 foreach ($index_checks as $table => $required_cols) {
     $indexes = $wpdb->get_results("SHOW INDEX FROM `$table`");
     if ($indexes === null) continue; // table may not exist
-    $indexed_cols = array_unique(array_column($indexes, 'Column_name'));
+    $index_keys = array_unique(array_column($indexes, 'Key_name'));
     foreach ($required_cols as $col) {
-        if (!in_array($col, $indexed_cols)) {
-            warn("Missing index on `$table`.`$col`");
+        if (!in_array($col, $index_keys)) {
+            warn("Missing index `$col` on `$table`");
             $index_issues++;
         }
     }
