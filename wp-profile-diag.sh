@@ -65,20 +65,27 @@ exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
 # wp_profile() runs a wp profile subcommand and captures its output.
-# --format=table forces table output even when stdout is not a TTY
-# (wp profile detects non-TTY and defaults to plain text otherwise).
+# Uses a temp file instead of $() command substitution: $() creates a pipe
+# which some versions of wp-cli/profile-command treat as non-TTY and ignore
+# --format=table, falling back to plain/CSV output. Writing to a temp file
+# and using cat preserves table formatting reliably.
 # stderr is captured separately so errors are shown cleanly, not mixed
 # into table data. WP_PROFILE_LAST stores the output for summary parsing.
 wp_profile() {
-    local output
-    output=$(wp --no-color "$@" --format=table 2>/tmp/wp_profile_err) || {
+    local tmpout
+    tmpout=$(mktemp)
+    if wp --no-color "$@" --format=table > "$tmpout" 2>/tmp/wp_profile_err; then
+        cat "$tmpout"
+        WP_PROFILE_LAST=$(cat "$tmpout")
+        rm -f "$tmpout"
+        return 0
+    else
         local err
         err=$(cat /tmp/wp_profile_err 2>/dev/null)
         [[ -n "$err" ]] && warn "wp profile error: $err"
+        rm -f "$tmpout"
         return 1
-    }
-    echo "$output"
-    WP_PROFILE_LAST="$output"
+    fi
 }
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
