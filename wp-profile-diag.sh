@@ -84,6 +84,16 @@ format_as_table() {
         }
         return s
     }
+    # Convert PHP scientific-notation floats (e.g. 2.6E-5) to readable time strings.
+    # Values >= 0.01 s shown as "X.XXs"; smaller values shown as "X.XXms".
+    function fmt_cell(v,    f) {
+        if (v ~ /[eE][-+][0-9]+$/) {
+            f = v + 0
+            if (f < 0.01)  return sprintf("%.2fms", f * 1000)
+            else           return sprintf("%.2fs",   f)
+        }
+        return v
+    }
     BEGIN { FS=","; maxcols=0; nr=0 }
     {
         nr++
@@ -91,6 +101,7 @@ format_as_table() {
             v = $i
             if (substr(v,1,1) == "\"" && substr(v,length(v),1) == "\"")
                 v = substr(v, 2, length(v)-2)
+            v = fmt_cell(v)
             rows[nr, i] = v
             if (length(v) > w[i]) w[i] = length(v)
         }
@@ -252,7 +263,7 @@ fi
 good "wp profile command is available"
 
 # Initialise analysis vars — populated by wp_profile() calls below
-STAGE_DATA=""; STAGE_COUNT=0
+STAGE_DATA=""; STAGE_COUNT=0; TOTAL_CALLBACKS=0
 HOOK_ALL_DATA=""; HOOK_ALL_COUNT=0
 SPOTLIGHT_DATA=""; SPOTLIGHT_COUNT=0
 HOOK_WP_DATA=""; HOOK_WP_COUNT=0
@@ -268,8 +279,28 @@ echo ""
 if wp_profile profile stage --orderby=time; then
     STAGE_DATA="$WP_PROFILE_LAST"
     STAGE_COUNT=$(echo "$STAGE_DATA" | grep -c '^| ' || true)
+    # Sum the callback invocations (runs/callback_count column) across all stages
+    TOTAL_CALLBACKS=$(echo "$STAGE_DATA" | awk -F'|' '
+        /^\| / && !hdr {
+            hdr = 1
+            for (i = 2; i <= NF-1; i++) {
+                v = $i; gsub(/^ +| +$/, "", v)
+                if (v == "runs" || v == "callback_count") cb_col = i
+            }
+            next
+        }
+        cb_col && /^\| / {
+            v = $2; gsub(/^ +| +$/, "", v)
+            if (v ~ /^(bootstrap|main_query|template)$/) {
+                n = $cb_col; gsub(/ /, "", n)
+                if (n ~ /^[0-9]+$/) total += n
+            }
+        }
+        END { print total+0 }
+    ' || echo 0)
     echo ""
     note "Total stages shown: ${STAGE_COUNT}"
+    [[ "${TOTAL_CALLBACKS:-0}" -gt 0 ]] && note "Total callback invocations across stages: ${TOTAL_CALLBACKS}"
 else
     warn "wp profile stage failed — site may not be reachable via loopback"
     note "Ensure the site URL is correct in wp-config.php / WP settings"
@@ -334,7 +365,21 @@ ISSUES=()
 # Extract time value (2nd pipe-delimited field) for each named stage
 parse_stage_time() {
     local stage="$1" output="$2"
-    echo "$output" | grep "| $stage " | awk -F'|' '{gsub(/ /,"",$3); print $3}' | head -1
+    # Find the 'time' column by name from the header row, then extract for the named stage.
+    echo "$output" | awk -F'|' -v stg="$stage" '
+        /^\| / && !hdr {
+            hdr = 1
+            for (i = 2; i <= NF-1; i++) {
+                v = $i; gsub(/^ +| +$/, "", v)
+                if (v == "time") time_col = i
+            }
+            next
+        }
+        time_col && /^\| / {
+            v = $2; gsub(/^ +| +$/, "", v)
+            if (v == stg) { val = $time_col; gsub(/ /, "", val); print val; exit }
+        }
+    '
 }
 
 if [[ -n "${STAGE_DATA:-}" ]]; then
@@ -346,13 +391,18 @@ if [[ -n "${STAGE_DATA:-}" ]]; then
     check_stage() {
         local name="$1" val="$2"
         if [[ -n "$val" ]]; then
-            # Compare using awk since bash can't do float comparisons
-            if awk "BEGIN{exit !($val > 0.5)}"; then
-                ISSUES+=("$name stage is slow (${val}s) — investigate callbacks in this stage")
-            elif awk "BEGIN{exit !($val > 0.2)}"; then
-                ISSUES+=("$name stage took ${val}s — worth reviewing")
+            # fmt_cell may have added a units suffix ("ms" or "s"); strip it for numeric comparison.
+            # ms values are converted back to seconds so thresholds remain consistent.
+            local num="${val%ms}"; num="${num%s}"
+            [[ "$val" == *ms ]] && num=$(awk "BEGIN{printf \"%.6f\", $num/1000}")
+            local display="$val"
+            [[ "$val" != *ms && "$val" != *s ]] && display="${val}s"
+            if awk "BEGIN{exit !($num > 0.5)}"; then
+                ISSUES+=("$name stage is slow (${display}) — investigate callbacks in this stage")
+            elif awk "BEGIN{exit !($num > 0.2)}"; then
+                ISSUES+=("$name stage took ${display} — worth reviewing")
             else
-                WINS+=("$name stage looks healthy (${val}s)")
+                WINS+=("$name stage looks healthy (${display})")
             fi
         fi
     }
@@ -382,14 +432,25 @@ if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
     fi
 fi
 
-# Hook count — very high total hook count can indicate bloat
-if [[ -n "${HOOK_ALL_COUNT:-}" ]]; then
-    if [[ "$HOOK_ALL_COUNT" -gt 200 ]]; then
-        ISSUES+=("High hook count (${HOOK_ALL_COUNT}) — may indicate plugin or theme bloat")
-    elif [[ "$HOOK_ALL_COUNT" -gt 100 ]]; then
-        ISSUES+=("Elevated hook count (${HOOK_ALL_COUNT}) — worth noting")
+# Total callback invocations across all stages (from stage breakdown)
+if [[ "${TOTAL_CALLBACKS:-0}" -gt 0 ]]; then
+    if [[ "$TOTAL_CALLBACKS" -gt 150000 ]]; then
+        ISSUES+=("High total callback invocations (${TOTAL_CALLBACKS}) — may indicate plugin or theme bloat")
+    elif [[ "$TOTAL_CALLBACKS" -gt 75000 ]]; then
+        ISSUES+=("Elevated callback count (${TOTAL_CALLBACKS} total invocations) — worth reviewing")
     else
-        WINS+=("Hook count looks reasonable (${HOOK_ALL_COUNT})")
+        WINS+=("Callback count looks reasonable (${TOTAL_CALLBACKS} total invocations)")
+    fi
+fi
+# Unique hooks tracked in the full hook breakdown (excludes header row)
+if [[ -n "${HOOK_ALL_COUNT:-}" && "${HOOK_ALL_COUNT:-0}" -gt 1 ]]; then
+    UNIQUE_HOOKS=$(( HOOK_ALL_COUNT - 1 ))
+    if [[ "$UNIQUE_HOOKS" -gt 500 ]]; then
+        ISSUES+=("High unique hook count (${UNIQUE_HOOKS} distinct hooks) — many active hooks")
+    elif [[ "$UNIQUE_HOOKS" -gt 200 ]]; then
+        ISSUES+=("Elevated unique hook count (${UNIQUE_HOOKS} distinct hooks) — worth noting")
+    else
+        WINS+=("Unique hook count looks reasonable (${UNIQUE_HOOKS} distinct hooks)")
     fi
 fi
 
@@ -476,10 +537,21 @@ with open(sys.argv[2], 'w', encoding='utf-8') as f:
     f.write(content)
 PYEOF
 
-if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+_PYTHON=""
+command -v python3 &>/dev/null && _PYTHON=python3
+[[ -z "$_PYTHON" ]] && command -v python &>/dev/null && _PYTHON=python
+
+if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
     rm -f "$REPORT_TMPFILE" "$_PY"
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
-    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
-    rm -f "$REPORT_TMPFILE" "$_PY"
+    rm -f "$_PY"
+    # Fallback: sed-based ANSI stripping (Unicode symbols not translated)
+    sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME" 2>/dev/null || true
+    rm -f "$REPORT_TMPFILE"
+    if [[ -s "$REPORT_FILENAME" ]]; then
+        printf "\033[3;38;2;136;146;160m  Report saved (basic): %s\033[0m\n" "$REPORT_FILENAME"
+    else
+        printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    fi
 fi
