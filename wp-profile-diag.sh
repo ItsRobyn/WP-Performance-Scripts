@@ -156,13 +156,13 @@ format_as_table() {
     '
 }
 # wp_profile() runs a wp profile subcommand and renders output as a bordered
-# ASCII table. Three-tier fallback strategy:
-#   1. --format=csv  → format_as_table  (fastest; field-name validation can exit 0
-#      with empty output on some profile-command versions, so we guard with -s)
-#   2. --format=json → PHP or Python → CSV → format_as_table  (JSON bypasses the
-#      CSV formatter's field-name validation; wp exit code is ignored here because
-#      some profile-command versions exit non-zero with valid JSON output)
-#   3. --format=table (raw)  (last resort — shows data even without formatting)
+# ASCII table.
+#   1. --format=csv → format_as_table (primary; works for most subcommands)
+#   2. --format=table → awk TSV-to-CSV → format_as_table (fallback for when both
+#      --format=csv and --format=json fail with "Invalid field" schema errors;
+#      WP-CLI outputs genuine tab-separated values in non-TTY/piped mode so the
+#      output is reliably parseable, with empty fields preserved as \t\t)
+#   If the TSV conversion produces nothing, raw --format=table is shown instead.
 wp_profile() {
     local tmpout tmpfmt
     tmpout=$(mktemp)
@@ -181,72 +181,54 @@ wp_profile() {
         fi
     fi
 
-    # Tier 2: JSON → PHP (or Python) → CSV.
-    # --format=json has no field-name validation so it works across all versions.
-    # Run wp separately and ignore exit code: some profile-command versions exit
-    # non-zero even with valid JSON, which would short-circuit a chained && and
-    # prevent us from ever checking the output file.
-    local _json _csv _phpscript
-    _json=$(mktemp)
+    # Tier 2: --format=table → awk TSV-to-CSV → format_as_table.
+    # Both --format=csv and --format=json fail with "Invalid field: callback_count"
+    # on some profile-command versions; --format=table bypasses field validation.
+    # WP-CLI writes genuine tab-separated values in non-TTY (file/pipe) mode —
+    # confirmed via cat -A: fields separated by ^I, empty fields preserved as ^I^I.
+    # Trailing 's' is stripped from time values (e.g. 0.0001s → 0.0001) so that
+    # format_as_table can accumulate and display a correct Total row.
+    local _tbl _csv
+    _tbl=$(mktemp)
     _csv=$(mktemp)
-    wp --no-color "$@" --format=json > "$_json" 2>/dev/null || true
-
-    if [[ -s "$_json" ]]; then
-        # Try PHP first — always present on WordPress hosts.
-        if command -v php &>/dev/null; then
-            _phpscript=$(mktemp)
-            cat > "$_phpscript" <<'PHPEOF'
-<?php
-$d = json_decode(stream_get_contents(STDIN), true);
-if (is_array($d) && !empty($d)) {
-    echo implode(',', array_keys($d[0])) . "\n";
-    foreach ($d as $row) {
-        $c = array();
-        foreach (array_values($row) as $v) {
-            $c[] = is_numeric($v) ? $v : '"' . str_replace('"', '""', (string)$v) . '"';
-        }
-        echo implode(',', $c) . "\n";
-    }
-}
-PHPEOF
-            php "$_phpscript" < "$_json" > "$_csv" 2>/dev/null || true
-            rm -f "$_phpscript"
-        fi
-
-        # Fall back to Python if PHP produced no output.
-        if [[ ! -s "$_csv" ]] && [[ -n "$_PYTHON" ]]; then
-            "$_PYTHON" -c "
-import json, sys, csv as _cm
-data = json.load(sys.stdin)
-if data:
-    w = _cm.writer(sys.stdout)
-    w.writerow(data[0].keys())
-    for row in data:
-        w.writerow(row.values())
-" < "$_json" > "$_csv" 2>/dev/null || true
-        fi
-
+    wp --no-color "$@" --format=table > "$_tbl" 2>/dev/null || true
+    if [[ -s "$_tbl" ]]; then
+        awk 'BEGIN { FS = "\t" }
+        /^Showing / || /^total / { next }
+        {
+            out = ""
+            for (i = 1; i <= NF; i++) {
+                v = $i
+                if (v ~ /^[0-9]+\.?[0-9]*s$/) sub(/s$/, "", v)
+                gsub(/"/, "\"\"", v)
+                if (i > 1) out = out ","
+                if (index(v, ",") > 0 || index(v, "\"") > 0) {
+                    out = out "\"" v "\""
+                } else {
+                    out = out v
+                }
+            }
+            print out
+        }' "$_tbl" > "$_csv"
         if [[ -s "$_csv" ]]; then
             format_as_table < "$_csv" > "$tmpfmt"
-            if [[ -s "$tmpfmt" ]]; then
-                cat "$tmpfmt"
-                WP_PROFILE_LAST=$(cat "$tmpfmt")
-                rm -f "$tmpout" "$tmpfmt" "$_json" "$_csv"
-                return 0
-            fi
         fi
-    fi
-    rm -f "$_json" "$_csv"
-
-    # Tier 3: raw --format=table — at minimum the user sees the data.
-    local err
-    err=$(cat /tmp/wp_profile_err 2>/dev/null)
-    if wp --no-color "$@" --format=table > "$tmpfmt" 2>/dev/null && [[ -s "$tmpfmt" ]]; then
-        cat "$tmpfmt"
-        WP_PROFILE_LAST=$(cat "$tmpfmt")
-        rm -f "$tmpout" "$tmpfmt"
+        if [[ -s "$tmpfmt" ]]; then
+            cat "$tmpfmt"
+            WP_PROFILE_LAST=$(cat "$tmpfmt")
+            rm -f "$tmpout" "$tmpfmt" "$_tbl" "$_csv"
+            return 0
+        fi
+        # TSV conversion produced no output — show raw table as last resort
+        cat "$_tbl"
+        WP_PROFILE_LAST=$(cat "$_tbl")
+        rm -f "$tmpout" "$tmpfmt" "$_tbl" "$_csv"
         return 0
     fi
+    rm -f "$_tbl" "$_csv"
+
+    local err
+    err=$(cat /tmp/wp_profile_err 2>/dev/null)
     [[ -n "$err" ]] && warn "wp profile error: $err"
     rm -f "$tmpout" "$tmpfmt"
     return 1
