@@ -64,7 +64,7 @@ exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 # Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
-# Detect Python — used in wp_profile() JSON fallback and report post-processing
+# Detect Python — used in report post-processing
 _PYTHON=""
 command -v python3 &>/dev/null && _PYTHON=python3
 [[ -z "$_PYTHON" ]] && command -v python &>/dev/null && _PYTHON=python
@@ -156,58 +156,77 @@ format_as_table() {
     '
 }
 # wp_profile() runs a wp profile subcommand and renders output as a bordered
-# ASCII table. Uses --format=csv + format_as_table() as the primary path.
-# If --format=csv fails with an "Invalid field" error (a version-mismatch bug
-# in some profile-command releases), falls back to --format=table and converts
-# the pipe-delimited WP-CLI output to CSV with awk before passing it through
-# format_as_table — giving identical time formatting and a totals row with no
-# external dependencies (pure awk, no Python required).
+# ASCII table. Three-tier fallback strategy:
+#   1. --format=csv  → format_as_table  (fastest; field-name validation can exit 0
+#      with empty output on some profile-command versions, so we guard with -s)
+#   2. --format=json → PHP → CSV → format_as_table  (PHP is always present on WP
+#      hosts; JSON output bypasses the CSV formatter's field-name validation entirely)
+#   3. --format=table (raw)  (last resort — shows data even without formatting)
 wp_profile() {
     local tmpout tmpfmt
     tmpout=$(mktemp)
     tmpfmt=$(mktemp)
-    if wp --no-color "$@" --format=csv > "$tmpout" 2>/tmp/wp_profile_err; then
+
+    # Tier 1: CSV path — guard with [[ -s ]] because some profile-command versions
+    # exit 0 with empty output when a field-name mismatch is detected.
+    if wp --no-color "$@" --format=csv > "$tmpout" 2>/tmp/wp_profile_err \
+            && [[ -s "$tmpout" ]]; then
         format_as_table < "$tmpout" > "$tmpfmt"
+        if [[ -s "$tmpfmt" ]]; then
+            cat "$tmpfmt"
+            WP_PROFILE_LAST=$(cat "$tmpfmt")
+            rm -f "$tmpout" "$tmpfmt"
+            return 0
+        fi
+    fi
+
+    # Tier 2: JSON → PHP → CSV. PHP is always available on WordPress hosts and
+    # --format=json has no field-name validation, so it works across all versions.
+    local _json _phpscript _csv
+    _json=$(mktemp)
+    _phpscript=$(mktemp)
+    _csv=$(mktemp)
+    cat > "$_phpscript" <<'PHPEOF'
+<?php
+$d = json_decode(stream_get_contents(STDIN), true);
+if (!empty($d)) {
+    echo implode(',', array_keys($d[0])) . "\n";
+    foreach ($d as $row) {
+        $cells = array();
+        foreach (array_values($row) as $v) {
+            $cells[] = is_numeric($v) ? $v
+                : '"' . str_replace('"', '""', (string)$v) . '"';
+        }
+        echo implode(',', $cells) . "\n";
+    }
+}
+PHPEOF
+    if wp --no-color "$@" --format=json > "$_json" 2>/dev/null \
+            && [[ -s "$_json" ]] \
+            && php "$_phpscript" < "$_json" > "$_csv" 2>/dev/null \
+            && [[ -s "$_csv" ]]; then
+        format_as_table < "$_csv" > "$tmpfmt"
+        if [[ -s "$tmpfmt" ]]; then
+            cat "$tmpfmt"
+            WP_PROFILE_LAST=$(cat "$tmpfmt")
+            rm -f "$tmpout" "$tmpfmt" "$_json" "$_phpscript" "$_csv"
+            return 0
+        fi
+    fi
+    rm -f "$_json" "$_phpscript" "$_csv"
+
+    # Tier 3: raw --format=table — at minimum the user sees the data.
+    local err
+    err=$(cat /tmp/wp_profile_err 2>/dev/null)
+    if wp --no-color "$@" --format=table > "$tmpfmt" 2>/dev/null && [[ -s "$tmpfmt" ]]; then
         cat "$tmpfmt"
         WP_PROFILE_LAST=$(cat "$tmpfmt")
         rm -f "$tmpout" "$tmpfmt"
         return 0
-    else
-        local err
-        err=$(cat /tmp/wp_profile_err 2>/dev/null)
-        # Field validation mismatch: CSV formatter rejects a field name that exists in the
-        # installed profile-command schema under a different name (e.g. callback_count vs cb).
-        # Fetch with --format=table (no field validation) and convert to CSV with awk so the
-        # output flows through format_as_table unchanged.
-        if echo "$err" | grep -qi "invalid field"; then
-            local _tbl
-            _tbl=$(mktemp)
-            if wp --no-color "$@" --format=table > "$_tbl" 2>/dev/null && [[ -s "$_tbl" ]]; then
-                awk '
-                /^\|/ {
-                    n = split($0, cells, "|")
-                    out = ""
-                    for (k = 2; k < n; k++) {
-                        v = cells[k]; gsub(/^ +| +$/, "", v)
-                        if (k > 2) out = out ","
-                        if (index(v, ",") > 0) v = "\"" v "\""
-                        out = out v
-                    }
-                    print out
-                }
-                ' "$_tbl" | format_as_table > "$tmpfmt"
-                cat "$tmpfmt"
-                WP_PROFILE_LAST=$(cat "$tmpfmt")
-                rm -f "$_tbl" "$tmpout" "$tmpfmt"
-                return 0
-            fi
-            rm -f "$_tbl"
-            err=$(cat /tmp/wp_profile_err 2>/dev/null)
-        fi
-        [[ -n "$err" ]] && warn "wp profile error: $err"
-        rm -f "$tmpout" "$tmpfmt"
-        return 1
     fi
+    [[ -n "$err" ]] && warn "wp profile error: $err"
+    rm -f "$tmpout" "$tmpfmt"
+    return 1
 }
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
