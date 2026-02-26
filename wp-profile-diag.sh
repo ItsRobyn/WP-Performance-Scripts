@@ -156,12 +156,12 @@ format_as_table() {
     '
 }
 # wp_profile() runs a wp profile subcommand and renders output as a bordered
-# ASCII table. Uses --format=csv (reliable across all WP-CLI versions and TTY
-# contexts) then converts via format_as_table(). stderr is captured separately
-# so errors are shown cleanly. WP_PROFILE_LAST stores the result for parsing.
+# ASCII table. Uses --format=csv + format_as_table() as the primary path.
 # If --format=csv fails with an "Invalid field" error (a version-mismatch bug
-# in some profile-command releases where the CSV formatter validates field names
-# that don't match the installed schema), falls back to --format=table.
+# in some profile-command releases), falls back to --format=table and converts
+# the pipe-delimited WP-CLI output to CSV with awk before passing it through
+# format_as_table — giving identical time formatting and a totals row with no
+# external dependencies (pure awk, no Python required).
 wp_profile() {
     local tmpout tmpfmt
     tmpout=$(mktemp)
@@ -175,46 +175,33 @@ wp_profile() {
     else
         local err
         err=$(cat /tmp/wp_profile_err 2>/dev/null)
-        # Field validation mismatch in some profile-command versions (e.g. Invalid field:
-        # callback_count): the CSV formatter validates field names that don't exist in the
-        # installed schema. Retry via JSON → python CSV conversion → format_as_table so the
-        # output still gets proper time formatting and the totals row.
+        # Field validation mismatch: CSV formatter rejects a field name that exists in the
+        # installed profile-command schema under a different name (e.g. callback_count vs cb).
+        # Fetch with --format=table (no field validation) and convert to CSV with awk so the
+        # output flows through format_as_table unchanged.
         if echo "$err" | grep -qi "invalid field"; then
-            local _py _csv
-            _py=$(mktemp)
-            _csv=$(mktemp)
-            cat > "$_py" <<'PYEOF'
-import sys, json, csv, io
-try:
-    data = json.load(open(sys.argv[1]))
-    if data:
-        buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=list(data[0].keys()))
-        w.writeheader()
-        w.writerows(data)
-        sys.stdout.write(buf.getvalue())
-except Exception:
-    sys.exit(1)
-PYEOF
-            if [[ -n "$_PYTHON" ]] && \
-               wp --no-color "$@" --format=json > "$tmpout" 2>/dev/null && \
-               [[ -s "$tmpout" ]] && \
-               "$_PYTHON" "$_py" "$tmpout" > "$_csv" 2>/dev/null && \
-               [[ -s "$_csv" ]]; then
-                format_as_table < "$_csv" > "$tmpfmt"
+            local _tbl
+            _tbl=$(mktemp)
+            if wp --no-color "$@" --format=table > "$_tbl" 2>/dev/null && [[ -s "$_tbl" ]]; then
+                awk '
+                /^\|/ {
+                    n = split($0, cells, "|")
+                    out = ""
+                    for (k = 2; k < n; k++) {
+                        v = cells[k]; gsub(/^ +| +$/, "", v)
+                        if (k > 2) out = out ","
+                        if (index(v, ",") > 0) v = "\"" v "\""
+                        out = out v
+                    }
+                    print out
+                }
+                ' "$_tbl" | format_as_table > "$tmpfmt"
                 cat "$tmpfmt"
                 WP_PROFILE_LAST=$(cat "$tmpfmt")
-                rm -f "$tmpout" "$tmpfmt" "$_py" "$_csv"
+                rm -f "$_tbl" "$tmpout" "$tmpfmt"
                 return 0
             fi
-            rm -f "$_py" "$_csv"
-            # JSON/python path unavailable: fall back to raw --format=table
-            if wp --no-color "$@" --format=table > "$tmpout" 2>/tmp/wp_profile_err; then
-                cat "$tmpout"
-                WP_PROFILE_LAST=$(cat "$tmpout")
-                rm -f "$tmpout" "$tmpfmt"
-                return 0
-            fi
+            rm -f "$_tbl"
             err=$(cat /tmp/wp_profile_err 2>/dev/null)
         fi
         [[ -n "$err" ]] && warn "wp profile error: $err"
