@@ -99,7 +99,7 @@ format_as_table() {
             if (f < 0.01)  return sprintf("%.4fms", f * 1000)
             else           return sprintf("%.4fs",   f)
         }
-        if (v ~ /^[0-9]*\.[0-9]{5,}$/) {
+        if (v ~ /^[0-9]*\.[0-9][0-9][0-9][0-9][0-9][0-9]*$/) {
             f = v + 0
             if (f < 0.001) return sprintf("%.4fms", f * 1000)
             else           return sprintf("%.4f",    f)
@@ -610,18 +610,6 @@ echo ""
 echo "  Spotlight (Section 7):"
 echo "    • These are your actionable items — hooks taking ≥1ms of real time"
 echo "    • Cross-reference with Section 4 of wp-perf-diag.php (plugins list)"
-echo ""
-echo -e "  ${BLD}Useful follow-up commands:${RST}"
-echo ""
-echo "    # Profile a specific hook in detail:"
-echo "    wp --no-color profile hook init --orderby=time"
-echo ""
-echo "    # Profile with a specific URL (useful for page-specific slowness):"
-echo "    wp --no-color profile stage --all --url=https://example.com/slow-page/"
-echo ""
-echo "    # Profile the template stage specifically:"
-echo "    wp --no-color profile hook template_redirect --orderby=time"
-echo ""
 # ── Save report ───────────────────────────────────────────────
 sleep 1; kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true
 # Restore both stdout and stderr to the terminal so python errors are visible
