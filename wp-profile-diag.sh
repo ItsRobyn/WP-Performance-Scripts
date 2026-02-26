@@ -159,8 +159,9 @@ format_as_table() {
 # ASCII table. Three-tier fallback strategy:
 #   1. --format=csv  → format_as_table  (fastest; field-name validation can exit 0
 #      with empty output on some profile-command versions, so we guard with -s)
-#   2. --format=json → PHP → CSV → format_as_table  (PHP is always present on WP
-#      hosts; JSON output bypasses the CSV formatter's field-name validation entirely)
+#   2. --format=json → PHP or Python → CSV → format_as_table  (JSON bypasses the
+#      CSV formatter's field-name validation; wp exit code is ignored here because
+#      some profile-command versions exit non-zero with valid JSON output)
 #   3. --format=table (raw)  (last resort — shows data even without formatting)
 wp_profile() {
     local tmpout tmpfmt
@@ -180,40 +181,62 @@ wp_profile() {
         fi
     fi
 
-    # Tier 2: JSON → PHP → CSV. PHP is always available on WordPress hosts and
-    # --format=json has no field-name validation, so it works across all versions.
-    local _json _phpscript _csv
+    # Tier 2: JSON → PHP (or Python) → CSV.
+    # --format=json has no field-name validation so it works across all versions.
+    # Run wp separately and ignore exit code: some profile-command versions exit
+    # non-zero even with valid JSON, which would short-circuit a chained && and
+    # prevent us from ever checking the output file.
+    local _json _csv _phpscript
     _json=$(mktemp)
-    _phpscript=$(mktemp)
     _csv=$(mktemp)
-    cat > "$_phpscript" <<'PHPEOF'
+    wp --no-color "$@" --format=json > "$_json" 2>/dev/null || true
+
+    if [[ -s "$_json" ]]; then
+        # Try PHP first — always present on WordPress hosts.
+        if command -v php &>/dev/null; then
+            _phpscript=$(mktemp)
+            cat > "$_phpscript" <<'PHPEOF'
 <?php
 $d = json_decode(stream_get_contents(STDIN), true);
-if (!empty($d)) {
+if (is_array($d) && !empty($d)) {
     echo implode(',', array_keys($d[0])) . "\n";
     foreach ($d as $row) {
-        $cells = array();
+        $c = array();
         foreach (array_values($row) as $v) {
-            $cells[] = is_numeric($v) ? $v
-                : '"' . str_replace('"', '""', (string)$v) . '"';
+            $c[] = is_numeric($v) ? $v : '"' . str_replace('"', '""', (string)$v) . '"';
         }
-        echo implode(',', $cells) . "\n";
+        echo implode(',', $c) . "\n";
     }
 }
 PHPEOF
-    if wp --no-color "$@" --format=json > "$_json" 2>/dev/null \
-            && [[ -s "$_json" ]] \
-            && php "$_phpscript" < "$_json" > "$_csv" 2>/dev/null \
-            && [[ -s "$_csv" ]]; then
-        format_as_table < "$_csv" > "$tmpfmt"
-        if [[ -s "$tmpfmt" ]]; then
-            cat "$tmpfmt"
-            WP_PROFILE_LAST=$(cat "$tmpfmt")
-            rm -f "$tmpout" "$tmpfmt" "$_json" "$_phpscript" "$_csv"
-            return 0
+            php "$_phpscript" < "$_json" > "$_csv" 2>/dev/null || true
+            rm -f "$_phpscript"
+        fi
+
+        # Fall back to Python if PHP produced no output.
+        if [[ ! -s "$_csv" ]] && [[ -n "$_PYTHON" ]]; then
+            "$_PYTHON" -c "
+import json, sys, csv as _cm
+data = json.load(sys.stdin)
+if data:
+    w = _cm.writer(sys.stdout)
+    w.writerow(data[0].keys())
+    for row in data:
+        w.writerow(row.values())
+" < "$_json" > "$_csv" 2>/dev/null || true
+        fi
+
+        if [[ -s "$_csv" ]]; then
+            format_as_table < "$_csv" > "$tmpfmt"
+            if [[ -s "$tmpfmt" ]]; then
+                cat "$tmpfmt"
+                WP_PROFILE_LAST=$(cat "$tmpfmt")
+                rm -f "$tmpout" "$tmpfmt" "$_json" "$_csv"
+                return 0
+            fi
         fi
     fi
-    rm -f "$_json" "$_phpscript" "$_csv"
+    rm -f "$_json" "$_csv"
 
     # Tier 3: raw --format=table — at minimum the user sees the data.
     local err
