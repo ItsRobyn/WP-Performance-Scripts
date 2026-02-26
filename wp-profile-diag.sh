@@ -64,6 +64,10 @@ exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 # Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
+# Detect Python — used in wp_profile() JSON fallback and report post-processing
+_PYTHON=""
+command -v python3 &>/dev/null && _PYTHON=python3
+[[ -z "$_PYTHON" ]] && command -v python &>/dev/null && _PYTHON=python
 # format_as_table() reads CSV from stdin and renders a bordered ASCII table.
 # Uses --format=csv (reliable regardless of WP-CLI version or TTY context)
 # rather than --format=table, which many profile-command versions ignore in
@@ -122,9 +126,9 @@ format_as_table() {
     }
     END {
         if (nr == 0) exit
-        # Build totals row and update column widths before printing anything
+        # Build totals row; only widen columns when Total row will actually be printed
         totals[1] = "Total"
-        if (length("Total") > w[1]) w[1] = length("Total")
+        if (nr > 1 && length("Total") > w[1]) w[1] = length("Total")
         for (i = 2; i <= maxcols; i++) {
             hdr = tolower(rows[1, i])
             if (has_sum[i] && hdr !~ /ratio|rate|pct/) {
@@ -132,7 +136,7 @@ format_as_table() {
             } else {
                 totals[i] = "-"
             }
-            if (length(totals[i]) > w[i]) w[i] = length(totals[i])
+            if (nr > 1 && length(totals[i]) > w[i]) w[i] = length(totals[i])
         }
         print hline()
         for (r = 1; r <= nr; r++) {
@@ -171,8 +175,40 @@ wp_profile() {
     else
         local err
         err=$(cat /tmp/wp_profile_err 2>/dev/null)
-        # Field validation mismatch in profile-command: retry with table format
+        # Field validation mismatch in some profile-command versions (e.g. Invalid field:
+        # callback_count): the CSV formatter validates field names that don't exist in the
+        # installed schema. Retry via JSON → python CSV conversion → format_as_table so the
+        # output still gets proper time formatting and the totals row.
         if echo "$err" | grep -qi "invalid field"; then
+            local _py _csv
+            _py=$(mktemp)
+            _csv=$(mktemp)
+            cat > "$_py" <<'PYEOF'
+import sys, json, csv, io
+try:
+    data = json.load(open(sys.argv[1]))
+    if data:
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=list(data[0].keys()))
+        w.writeheader()
+        w.writerows(data)
+        sys.stdout.write(buf.getvalue())
+except Exception:
+    sys.exit(1)
+PYEOF
+            if [[ -n "$_PYTHON" ]] && \
+               wp --no-color "$@" --format=json > "$tmpout" 2>/dev/null && \
+               [[ -s "$tmpout" ]] && \
+               "$_PYTHON" "$_py" "$tmpout" > "$_csv" 2>/dev/null && \
+               [[ -s "$_csv" ]]; then
+                format_as_table < "$_csv" > "$tmpfmt"
+                cat "$tmpfmt"
+                WP_PROFILE_LAST=$(cat "$tmpfmt")
+                rm -f "$tmpout" "$tmpfmt" "$_py" "$_csv"
+                return 0
+            fi
+            rm -f "$_py" "$_csv"
+            # JSON/python path unavailable: fall back to raw --format=table
             if wp --no-color "$@" --format=table > "$tmpout" 2>/tmp/wp_profile_err; then
                 cat "$tmpout"
                 WP_PROFILE_LAST=$(cat "$tmpout")
@@ -320,7 +356,7 @@ echo ""
 
 if wp_profile profile stage --orderby=time; then
     STAGE_DATA="$WP_PROFILE_LAST"
-    STAGE_COUNT=$(echo "$STAGE_DATA" | grep -c '^| ' || true)
+    STAGE_COUNT=$(( $(echo "$STAGE_DATA" | grep -c '^| ' || true) - 2 ))
     # Sum the callback invocations (runs/callback_count column) across all stages
     TOTAL_CALLBACKS=$(echo "$STAGE_DATA" | awk -F'|' '
         /^\| / && !hdr {
@@ -357,7 +393,7 @@ echo ""
 
 if wp_profile profile stage bootstrap --orderby=time; then
     echo ""
-    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 2 ))"
 else
     warn "wp profile stage bootstrap failed"
 fi
@@ -369,7 +405,7 @@ echo ""
 
 if wp_profile profile stage main_query --orderby=time; then
     echo ""
-    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 2 ))"
 else
     warn "wp profile stage main_query failed"
 fi
@@ -381,7 +417,7 @@ echo ""
 
 if wp_profile profile stage template --orderby=time; then
     echo ""
-    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+    note "Total hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 2 ))"
 else
     warn "wp profile stage template failed"
 fi
@@ -394,7 +430,7 @@ echo ""
 
 if wp_profile profile hook --spotlight --orderby=time; then
     echo ""
-    note "Slow hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 1 ))"
+    note "Slow hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 2 ))"
 else
     warn "wp profile hook --spotlight failed"
 fi
@@ -408,7 +444,7 @@ if wp_profile profile hook --all --spotlight --orderby=time; then
     SPOTLIGHT_DATA="$WP_PROFILE_LAST"
     SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     echo ""
-    note "Slow hooks shown: $(( ${SPOTLIGHT_COUNT} - 1 ))"
+    note "Slow hooks shown: $(( ${SPOTLIGHT_COUNT} - 2 ))"
 else
     warn "wp profile hook --all --spotlight failed"
 fi
@@ -424,10 +460,10 @@ profile_hook_spotlight() {
         local hcount
         hcount=$(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true)
         echo ""
-        if [[ "${hcount:-0}" -le 1 ]]; then
+        if [[ "${hcount:-0}" -le 2 ]]; then
             note "No callbacks on '${hookname}' exceeded 1ms"
         else
-            note "Slow callbacks shown: $(( hcount - 1 ))"
+            note "Slow callbacks shown: $(( hcount - 2 ))"
         fi
     else
         warn "wp profile hook ${hookname} --spotlight failed"
@@ -499,9 +535,9 @@ if [[ -n "${STAGE_DATA:-}" ]]; then
     check_stage "template"   "$TEMPLATE_T"
 fi
 
-# Count spotlight hooks (slow hooks ≥1ms) — subtract 1 for the header row
+# Count spotlight hooks (slow hooks ≥1ms) — subtract 2 for the header and Total rows
 if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
-    SLOW_COUNT=$(( $(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true) - 1 ))
+    SLOW_COUNT=$(( $(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true) - 2 ))
     if [[ "$SLOW_COUNT" -le 0 ]]; then
         WINS+=("No hooks exceeded 1ms — excellent hook performance")
     elif [[ "$SLOW_COUNT" -le 5 ]]; then
@@ -587,7 +623,7 @@ echo "    # Profile the template stage specifically:"
 echo "    wp --no-color profile hook template_redirect --orderby=time"
 echo ""
 # ── Save report ───────────────────────────────────────────────
-kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true; sleep 0.2
+sleep 1; kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true
 # Restore both stdout and stderr to the terminal so python errors are visible
 exec 1>&3 2>&3 3>&-
 
@@ -623,10 +659,6 @@ for char, replacement in replacements.items():
 with open(sys.argv[2], 'w', encoding='utf-8') as f:
     f.write(content)
 PYEOF
-
-_PYTHON=""
-command -v python3 &>/dev/null && _PYTHON=python3
-[[ -z "$_PYTHON" ]] && command -v python &>/dev/null && _PYTHON=python
 
 if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
     rm -f "$REPORT_TMPFILE" "$_PY"
