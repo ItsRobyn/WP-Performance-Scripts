@@ -90,9 +90,9 @@ format_as_table() {
         }
         return s
     }
-    # Format numeric values for display (4 decimal places).
+    # Format numeric values for display (4 decimal places, s/ms suffix).
     # Scientific notation  → time string with ms or s suffix.
-    # Regular decimals >4dp → truncated to 4dp (ms suffix if sub-millisecond).
+    # Regular decimals >4dp → truncated to 4dp with ms or s suffix.
     function fmt_cell(v,    f) {
         if (v ~ /[eE][-+][0-9]+$/) {
             f = v + 0
@@ -102,7 +102,7 @@ format_as_table() {
         if (v ~ /^[0-9]*\.[0-9][0-9][0-9][0-9][0-9][0-9]*$/) {
             f = v + 0
             if (f < 0.001) return sprintf("%.4fms", f * 1000)
-            else           return sprintf("%.4f",    f)
+            else           return sprintf("%.4fs",   f)
         }
         return v
     }
@@ -132,7 +132,7 @@ format_as_table() {
         for (i = 2; i <= maxcols; i++) {
             hdr = tolower(rows[1, i])
             if (has_sum[i] && hdr !~ /ratio|rate|pct/) {
-                totals[i] = fmt_cell(sprintf("%.10g", sums[i]))
+                totals[i] = fmt_cell(sprintf(hdr ~ /time/ ? "%.10f" : "%.10g", sums[i]))
             } else {
                 totals[i] = "-"
             }
