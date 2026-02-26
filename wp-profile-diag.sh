@@ -68,6 +68,8 @@ TAIL_PID=$!
 # Uses --format=csv (reliable regardless of WP-CLI version or TTY context)
 # rather than --format=table, which many profile-command versions ignore in
 # non-TTY contexts, falling back to plain space-separated output.
+# Appends a computed "Total" row summing numeric columns (ratio/rate/pct
+# columns are excluded as summing them is meaningless).
 format_as_table() {
     awk '
     function rpad(s, n,    r, i) {
@@ -84,13 +86,19 @@ format_as_table() {
         }
         return s
     }
-    # Convert PHP scientific-notation floats (e.g. 2.6E-5) to readable time strings.
-    # Values >= 0.01 s shown as "X.XXs"; smaller values shown as "X.XXms".
+    # Format numeric values for display (4 decimal places).
+    # Scientific notation  → time string with ms or s suffix.
+    # Regular decimals >4dp → truncated to 4dp (ms suffix if sub-millisecond).
     function fmt_cell(v,    f) {
         if (v ~ /[eE][-+][0-9]+$/) {
             f = v + 0
-            if (f < 0.01)  return sprintf("%.2fms", f * 1000)
-            else           return sprintf("%.2fs",   f)
+            if (f < 0.01)  return sprintf("%.4fms", f * 1000)
+            else           return sprintf("%.4fs",   f)
+        }
+        if (v ~ /^[0-9]*\.[0-9]{5,}$/) {
+            f = v + 0
+            if (f < 0.001) return sprintf("%.4fms", f * 1000)
+            else           return sprintf("%.4f",    f)
         }
         return v
     }
@@ -98,23 +106,46 @@ format_as_table() {
     {
         nr++
         for (i = 1; i <= NF; i++) {
-            v = $i
-            if (substr(v,1,1) == "\"" && substr(v,length(v),1) == "\"")
-                v = substr(v, 2, length(v)-2)
-            v = fmt_cell(v)
+            raw = $i
+            if (substr(raw,1,1) == "\"" && substr(raw,length(raw),1) == "\"")
+                raw = substr(raw, 2, length(raw)-2)
+            v = fmt_cell(raw)
             rows[nr, i] = v
             if (length(v) > w[i]) w[i] = length(v)
+            # Accumulate raw numeric values for totals (skip header row and first column)
+            if (nr > 1 && i > 1 && raw ~ /^[0-9]*\.?[0-9]+([eE][-+][0-9]+)?$/) {
+                sums[i] += raw + 0
+                has_sum[i] = 1
+            }
         }
         if (NF > maxcols) maxcols = NF
     }
     END {
         if (nr == 0) exit
+        # Build totals row and update column widths before printing anything
+        totals[1] = "Total"
+        if (length("Total") > w[1]) w[1] = length("Total")
+        for (i = 2; i <= maxcols; i++) {
+            hdr = tolower(rows[1, i])
+            if (has_sum[i] && hdr !~ /ratio|rate|pct/) {
+                totals[i] = fmt_cell(sprintf("%.10g", sums[i]))
+            } else {
+                totals[i] = "-"
+            }
+            if (length(totals[i]) > w[i]) w[i] = length(totals[i])
+        }
         print hline()
         for (r = 1; r <= nr; r++) {
             line = "|"
             for (i = 1; i <= maxcols; i++) line = line " " rpad(rows[r, i], w[i]) " |"
             print line
             if (r == 1) print hline()
+        }
+        if (nr > 1) {
+            print hline()
+            line = "|"
+            for (i = 1; i <= maxcols; i++) line = line " " rpad(totals[i], w[i]) " |"
+            print line
         }
         print hline()
     }
@@ -124,6 +155,9 @@ format_as_table() {
 # ASCII table. Uses --format=csv (reliable across all WP-CLI versions and TTY
 # contexts) then converts via format_as_table(). stderr is captured separately
 # so errors are shown cleanly. WP_PROFILE_LAST stores the result for parsing.
+# If --format=csv fails with an "Invalid field" error (a version-mismatch bug
+# in some profile-command releases where the CSV formatter validates field names
+# that don't match the installed schema), falls back to --format=table.
 wp_profile() {
     local tmpout tmpfmt
     tmpout=$(mktemp)
@@ -132,15 +166,25 @@ wp_profile() {
         format_as_table < "$tmpout" > "$tmpfmt"
         cat "$tmpfmt"
         WP_PROFILE_LAST=$(cat "$tmpfmt")
+        rm -f "$tmpout" "$tmpfmt"
+        return 0
     else
         local err
         err=$(cat /tmp/wp_profile_err 2>/dev/null)
+        # Field validation mismatch in profile-command: retry with table format
+        if echo "$err" | grep -qi "invalid field"; then
+            if wp --no-color "$@" --format=table > "$tmpout" 2>/tmp/wp_profile_err; then
+                cat "$tmpout"
+                WP_PROFILE_LAST=$(cat "$tmpout")
+                rm -f "$tmpout" "$tmpfmt"
+                return 0
+            fi
+            err=$(cat /tmp/wp_profile_err 2>/dev/null)
+        fi
         [[ -n "$err" ]] && warn "wp profile error: $err"
         rm -f "$tmpout" "$tmpfmt"
         return 1
     fi
-    rm -f "$tmpout" "$tmpfmt"
-    return 0
 }
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
