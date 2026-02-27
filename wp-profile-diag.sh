@@ -634,13 +634,14 @@ exec 1>&3 2>&3 3>&-
 # ambiguity that exists when stdout/stderr have been redirected mid-script
 _PY=$(mktemp)
 cat > "$_PY" <<'PYEOF'
-import sys, re
+from __future__ import unicode_literals
+import sys, re, io
 
-with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+with io.open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
     content = f.read()
 
-# Strip ANSI escape codes
-content = re.sub(r'\033\[[0-9;]*m', '', content)
+# Strip ANSI escape codes (compatible with Python 2 and 3)
+content = re.sub(u'\x1b\\[[0-9;]*m', u'', content)
 
 # Replace box-drawing and symbol characters with ASCII equivalents
 replacements = {
@@ -661,11 +662,16 @@ replacements = {
 for char, replacement in replacements.items():
     content = content.replace(char, replacement)
 
-with open(sys.argv[2], 'w', encoding='utf-8') as f:
+with io.open(sys.argv[2], 'w', encoding='utf-8') as f:
     f.write(content)
 PYEOF
 
-if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+_PYTHON=""
+for _py in python3 python; do
+    command -v "$_py" &>/dev/null && { _PYTHON="$_py"; break; }
+done
+
+if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
     rm -f "$REPORT_TMPFILE" "$_PY"
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
