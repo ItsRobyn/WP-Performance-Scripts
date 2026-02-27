@@ -239,9 +239,9 @@ wp_profile() {
 }
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
-echo -e "  │${SEC}           WP-CLI Profile Installer & Runner              ${PRI}│"
-echo -e "  │${SEC}                 wp-profile-diag.sh                       ${PRI}│"
-echo -e "  │${SEC}                   By Robyn × Claude AI                   ${PRI}│"
+echo -e "  │${SEC}            WP-CLI Profile Installer & Runner             ${PRI}│"
+echo -e "  │${SEC}                  wp-profile-diag.sh                      ${PRI}│"
+echo -e "  │${SEC}                 By Robyn × Claude AI                     ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
@@ -650,6 +650,7 @@ exec 1>&3 2>&3 3>&-
 # ambiguity that exists when stdout/stderr have been redirected mid-script
 _PY=$(mktemp)
 cat > "$_PY" <<'PYEOF'
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import sys, re, io
 
