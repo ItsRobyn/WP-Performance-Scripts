@@ -692,6 +692,13 @@ if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"
     rm -f "$REPORT_TMPFILE" "$_PY"
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
-    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
-    rm -f "$REPORT_TMPFILE" "$_PY"
+    rm -f "$_PY"
+    # Fallback: sed-based ANSI stripping (Unicode symbols not converted)
+    sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME" 2>/dev/null || true
+    rm -f "$REPORT_TMPFILE"
+    if [[ -s "$REPORT_FILENAME" ]]; then
+        printf "\033[3;38;2;136;146;160m  Report saved (basic): %s\033[0m\n" "$REPORT_FILENAME"
+    else
+        printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    fi
 fi
