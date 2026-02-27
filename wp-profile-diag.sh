@@ -563,20 +563,31 @@ if [[ -n "${SPOTLIGHT_DATA:-}" ]]; then
         ISSUES+=("${SLOW_COUNT} hooks exceeded 1ms — significant hook overhead detected")
     fi
 
-    # Surface the single slowest hook by name from the first data row (skip header)
-    SLOWEST_HOOK=$(echo "$SPOTLIGHT_DATA" | awk -F'|' '
-        /^\| / && !hdr { hdr=1; next }
-        /^\| / { v=$2; gsub(/^ +| +$/, "", v); if (v != "") { print v; exit } }
-    ')
-    SLOWEST_TIME=$(echo "$SPOTLIGHT_DATA" | awk -F'|' '
+    # Surface the slowest hook — scan all data rows for the actual maximum time.
+    # wp profile --orderby=time sorts ascending, so the first row is the fastest;
+    # we must find the maximum rather than assuming row order.
+    _SLOWEST=$(echo "$SPOTLIGHT_DATA" | awk -F'|' '
         /^\| / && !hdr {
             hdr=1
             for (i=2; i<=NF-1; i++) { v=$i; gsub(/^ +| +$/,"",v); if (v=="time") col=i }
             next
         }
-        col && /^\| / { v=$col; gsub(/ /,"",v); if (v!="") { print v; exit } }
+        col && /^\| / {
+            name=$2; gsub(/^ +| +$/, "", name)
+            if (name == "" || name == "Total") next
+            t=$col; gsub(/ /,"",t)
+            num=t; sub(/ms$/,"",num); sub(/s$/,"",num)
+            secs = (t ~ /ms$/) ? (num+0)/1000 : num+0
+            if (secs > maxsecs) { maxsecs=secs; bname=name; btime=t }
+        }
+        END { if (bname != "") print bname "\t" btime "\t" maxsecs }
     ')
-    if [[ -n "$SLOWEST_HOOK" && -n "$SLOWEST_TIME" ]]; then
+    SLOWEST_HOOK=$(echo "$_SLOWEST" | cut -f1)
+    SLOWEST_TIME=$(echo "$_SLOWEST" | cut -f2)
+    SLOWEST_SECS=$(echo "$_SLOWEST" | cut -f3)
+    # Only flag as an issue if the slowest hook exceeded 10ms — below that the
+    # slow-count message above is sufficient context.
+    if [[ -n "$SLOWEST_HOOK" ]] && awk "BEGIN{exit !(${SLOWEST_SECS:-0} > 0.010)}"; then
         ISSUES+=("Slowest hook: '$SLOWEST_HOOK' at ${SLOWEST_TIME} — investigate callbacks on this hook")
     fi
 fi
