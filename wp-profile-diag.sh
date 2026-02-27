@@ -64,10 +64,6 @@ exec 3>&1 1>"$REPORT_TMPFILE" 2>&1
 # Stream the file to the terminal in real time via tail -f on fd 3
 tail -f "$REPORT_TMPFILE" >&3 &
 TAIL_PID=$!
-# Detect Python — used in report post-processing
-_PYTHON=""
-command -v python3 &>/dev/null && _PYTHON=python3
-[[ -z "$_PYTHON" ]] && command -v python &>/dev/null && _PYTHON=python
 # format_as_table() reads CSV from stdin and renders a bordered ASCII table.
 # Uses --format=csv (reliable regardless of WP-CLI version or TTY context)
 # rather than --format=table, which many profile-command versions ignore in
@@ -75,7 +71,8 @@ command -v python3 &>/dev/null && _PYTHON=python3
 # Appends a computed "Total" row summing numeric columns (ratio/rate/pct
 # columns are excluded as summing them is meaningless).
 format_as_table() {
-    awk '
+    local _mc="${1:-0}"
+    awk -v maxcol="$_mc" '
     function rpad(s, n,    r, i) {
         r = s
         for (i = length(s); i < n; i++) r = r " "
@@ -114,6 +111,12 @@ format_as_table() {
             if (substr(raw,1,1) == "\"" && substr(raw,length(raw),1) == "\"")
                 raw = substr(raw, 2, length(raw)-2)
             v = fmt_cell(raw)
+            if (maxcol > 0 && nr > 1 && length(v) > maxcol) {
+                if (v ~ /\/[^\/]*:[0-9]+$/)
+                    v = "..." substr(v, length(v) - maxcol + 4)
+                else
+                    v = substr(v, 1, maxcol - 3) "..."
+            }
             rows[nr, i] = v
             if (length(v) > w[i]) w[i] = length(v)
             # Accumulate raw numeric values for totals (skip header row and first column)
@@ -164,7 +167,8 @@ format_as_table() {
 #      output is reliably parseable, with empty fields preserved as \t\t)
 #   If the TSV conversion produces nothing, raw --format=table is shown instead.
 wp_profile() {
-    local tmpout tmpfmt
+    local tmpout tmpfmt _maxcol=0
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then _maxcol="$1"; shift; fi
     tmpout=$(mktemp)
     tmpfmt=$(mktemp)
 
@@ -172,7 +176,7 @@ wp_profile() {
     # exit 0 with empty output when a field-name mismatch is detected.
     if wp --no-color "$@" --format=csv > "$tmpout" 2>/tmp/wp_profile_err \
             && [[ -s "$tmpout" ]]; then
-        format_as_table < "$tmpout" > "$tmpfmt"
+        format_as_table "$_maxcol" < "$tmpout" > "$tmpfmt"
         if [[ -s "$tmpfmt" ]]; then
             cat "$tmpfmt"
             WP_PROFILE_LAST=$(cat "$tmpfmt")
@@ -211,7 +215,7 @@ wp_profile() {
             print out
         }' "$_tbl" > "$_csv"
         if [[ -s "$_csv" ]]; then
-            format_as_table < "$_csv" > "$tmpfmt"
+            format_as_table "$_maxcol" < "$_csv" > "$tmpfmt"
         fi
         if [[ -s "$tmpfmt" ]]; then
             cat "$tmpfmt"
@@ -439,7 +443,7 @@ section "9. WP PROFILE — SPOTLIGHT: BOOTSTRAP HOOKS (≥1ms)"
 note "Slow hooks (≥1ms) within the bootstrap stage only..."
 echo ""
 
-if wp_profile profile hook --spotlight --orderby=time; then
+if wp_profile 45 profile hook --spotlight --orderby=time; then
     echo ""
     note "Slow hooks shown: $(( $(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true) - 2 ))"
 else
@@ -451,7 +455,7 @@ section "10. WP PROFILE — SPOTLIGHT: ALL STAGES (≥1ms)"
 note "Slow hooks (≥1ms) across all WordPress load stages — the most actionable view..."
 echo ""
 
-if wp_profile profile hook --all --spotlight --orderby=time; then
+if wp_profile 45 profile hook --all --spotlight --orderby=time; then
     SPOTLIGHT_DATA="$WP_PROFILE_LAST"
     SPOTLIGHT_COUNT=$(echo "$SPOTLIGHT_DATA" | grep -c '^| ' || true)
     echo ""
@@ -467,7 +471,7 @@ profile_hook_spotlight() {
     section "${secnum}. WP PROFILE — HOOK: ${hookname}"
     note "$hooknote"
     echo ""
-    if wp_profile profile hook "$hookname" --spotlight --orderby=time; then
+    if wp_profile 45 profile hook "$hookname" --spotlight --orderby=time; then
         local hcount
         hcount=$(echo "$WP_PROFILE_LAST" | grep -c '^| ' || true)
         echo ""
@@ -651,6 +655,8 @@ replacements = {
     '✓': '+',
     '✗': 'x',
     '•': '*',
+    '▶': '>',
+    '≥': '>=',
 }
 for char, replacement in replacements.items():
     content = content.replace(char, replacement)
@@ -659,17 +665,10 @@ with open(sys.argv[2], 'w', encoding='utf-8') as f:
     f.write(content)
 PYEOF
 
-if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
     rm -f "$REPORT_TMPFILE" "$_PY"
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
-    rm -f "$_PY"
-    # Fallback: sed-based ANSI stripping (Unicode symbols not translated)
-    sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME" 2>/dev/null || true
-    rm -f "$REPORT_TMPFILE"
-    if [[ -s "$REPORT_FILENAME" ]]; then
-        printf "\033[3;38;2;136;146;160m  Report saved (basic): %s\033[0m\n" "$REPORT_FILENAME"
-    else
-        printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
-    fi
+    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    rm -f "$REPORT_TMPFILE" "$_PY"
 fi
