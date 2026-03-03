@@ -238,7 +238,7 @@ row('PHP memory_limit',   ini_get('memory_limit'));
 // CLI process. Skip the block entirely when running via WP-CLI to avoid false results.
 $opcache_enabled = null; // null = not checked (CLI) or indeterminate
 if ($is_cli) {
-    row('OPcache', 'only available when run via browser', 'INFO');
+    row('OPcache', 'Only available when run via browser', 'INFO');
 } else {
     $_atomic_opcache_mb = $_SERVER['ATOMIC_SITE_OPCACHE_MEMORY_MB'] ?? $_ENV['ATOMIC_SITE_OPCACHE_MEMORY_MB'] ?? null;
     if ($_atomic_opcache_mb !== null) {
