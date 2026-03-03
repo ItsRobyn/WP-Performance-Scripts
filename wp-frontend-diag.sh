@@ -77,9 +77,9 @@ sleep 0.1  # give tail time to open the file before writing
 # ── Header ────────────────────────────────────────────────────
 echo -e "\n${PRI}"
 echo -e "  ┌──────────────────────────────────────────────────────────┐"
-echo -e "  │${SEC}          WP External Performance Diagnostics             ${PRI}│"
-echo -e "  │${SEC}                wp-frontend-diag.sh                       ${PRI}│"
-echo -e "  │${SEC}                By Robyn × Claude AI                      ${PRI}│"
+echo -e "  │${SEC}           WP External Performance Diagnostics            ${PRI}│"
+echo -e "  │${SEC}                   wp-frontend-diag.sh                    ${PRI}│"
+echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"

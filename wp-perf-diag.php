@@ -25,10 +25,10 @@ if (!$is_cli) {
     // Basic security: only allow if accessed with a secret param
     // Set ?secret=YOUR_SECRET in the URL, or remove this block if
     // you trust your network.
-    $expected_secret = getenv('WP_DIAG_SECRET') ?: 'wp-diag-2025';
+    $expected_secret = getenv('WP_DIAG_SECRET') ?: 'pressable-diag';
     if (($_GET['secret'] ?? '') !== $expected_secret) {
         http_response_code(403);
-        die('Forbidden. Add ?secret=wp-diag-2025 to the URL (or set WP_DIAG_SECRET env var).');
+        die('Forbidden. Add ?secret=pressable-diag to the URL (or set WP_DIAG_SECRET env var).');
     }
 }
 
@@ -232,23 +232,37 @@ row('Script Debug',       defined('SCRIPT_DEBUG') && SCRIPT_DEBUG ? 'ON' : 'off'
 row('WP Memory Limit',    WP_MEMORY_LIMIT);
 row('WP Max Memory Limit', defined('WP_MAX_MEMORY_LIMIT') ? WP_MAX_MEMORY_LIMIT : 'not set');
 row('PHP memory_limit',   ini_get('memory_limit'));
-$opcache_enabled = function_exists('opcache_get_status') && @opcache_get_status() !== false;
-row('OPcache enabled', $opcache_enabled ? 'Yes' : 'No', $opcache_enabled ? 'OK' : 'INFO');
+// OPcache status is only reliable in a web/FPM context — opcache_get_status() always
+// returns false in WP-CLI (opcache.enable_cli is off by default), and the Atomic
+// platform env var (ATOMIC_SITE_OPCACHE_MEMORY_MB) is FPM-only and not visible to the
+// CLI process. Skip the block entirely when running via WP-CLI to avoid false results.
+$opcache_enabled = null; // null = not checked (CLI) or indeterminate
+if ($is_cli) {
+    row('OPcache', 'only available when run via browser', 'INFO');
+} else {
+    $_atomic_opcache_mb = $_SERVER['ATOMIC_SITE_OPCACHE_MEMORY_MB'] ?? $_ENV['ATOMIC_SITE_OPCACHE_MEMORY_MB'] ?? null;
+    if ($_atomic_opcache_mb !== null) {
+        $opcache_enabled = (int) $_atomic_opcache_mb > 0;
+    } else {
+        $opcache_enabled = function_exists('opcache_get_status') && @opcache_get_status() !== false;
+    }
+    row('OPcache enabled', $opcache_enabled ? 'Yes' : 'No', $opcache_enabled ? 'OK' : 'INFO');
 
-if (function_exists('opcache_get_status')) {
-    $op = @opcache_get_status(false);
-    if ($op) {
-        $used  = $op['memory_usage']['used_memory'] ?? 0;
-        $free  = $op['memory_usage']['free_memory'] ?? 0;
-        $total = $used + $free;
-        $pct   = $total ? round($used / $total * 100) : 0;
-        row('OPcache memory usage', bytes($used) . ' / ' . bytes($total) . " ($pct%)", $pct > 90 ? 'WARN' : 'OK');
-        row('OPcache cached scripts', $op['opcache_statistics']['num_cached_scripts'] ?? 'n/a');
-        row('OPcache hit rate',
-            isset($op['opcache_statistics']['opcache_hit_rate'])
-                ? round($op['opcache_statistics']['opcache_hit_rate'], 2) . '%'
-                : 'n/a',
-            ($op['opcache_statistics']['opcache_hit_rate'] ?? 100) < 80 ? 'WARN' : 'OK');
+    if (function_exists('opcache_get_status')) {
+        $op = @opcache_get_status(false);
+        if ($op) {
+            $used  = $op['memory_usage']['used_memory'] ?? 0;
+            $free  = $op['memory_usage']['free_memory'] ?? 0;
+            $total = $used + $free;
+            $pct   = $total ? round($used / $total * 100) : 0;
+            row('OPcache memory usage', bytes($used) . ' / ' . bytes($total) . " ($pct%)", $pct > 90 ? 'WARN' : 'OK');
+            row('OPcache cached scripts', $op['opcache_statistics']['num_cached_scripts'] ?? 'n/a');
+            row('OPcache hit rate',
+                isset($op['opcache_statistics']['opcache_hit_rate'])
+                    ? round($op['opcache_statistics']['opcache_hit_rate'], 2) . '%'
+                    : 'n/a',
+                ($op['opcache_statistics']['opcache_hit_rate'] ?? 100) < 80 ? 'WARN' : 'OK');
+        }
     }
 }
 
@@ -1712,7 +1726,7 @@ $other_signals      = (int)$has_builder + (int)$high_scripts + (int)$high_styles
 // - 40+ plugins alone, OR
 // - 40+ plugins plus at least one other signal, OR
 // - both high scripts AND high styles (without needing high plugin count)
-$opcache_worthwhile = !$opcache_enabled && (
+$opcache_worthwhile = $opcache_enabled === false && (
     $high_plugin_count ||
     $other_signals >= 2
 );
@@ -1809,6 +1823,10 @@ if ($wins) {
     foreach ($wins as $w) good("  $w");
 }
 $GLOBALS['out'][] = '';
+if ($is_cli) {
+    note('OPcache status not checked — rerun via browser for accurate result');
+    $GLOBALS['out'][] = '';
+}
 if ($issues) {
     $GLOBALS['out'][] = $is_cli ? "\033[1;38;2;182;29;111m  ⚠ Issues/Recommendations:\033[0m" : '  ⚠ Issues/Recommendations:';
     foreach ($issues as $i) warn("  $i");
