@@ -139,6 +139,7 @@ $GLOBALS['out'][] = $pri . '  │' . $wht . $_hdr_center('By Robyn × Claude AI'
 $GLOBALS['out'][] = $pri . '  └──────────────────────────────────────────────────────────┘' . $rst;
 $GLOBALS['out'][] = '';
 $bld = $is_cli ? "\033[1m" : '';
+$GLOBALS['out'][] = sprintf("  %s%-20s%s %s", $bld, 'Version',   $rst, '1.0.0');
 $GLOBALS['out'][] = sprintf("  %s%-20s%s %s", $bld, 'Generated', $rst, gmdate('Y-m-d H:i:s') . ' UTC');
 $GLOBALS['out'][] = sprintf("  %s%-20s%s %s", $bld, 'Site',      $rst, get_home_url());
 
