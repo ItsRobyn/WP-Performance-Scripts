@@ -743,6 +743,7 @@ if ($savequeries_on && !empty($wpdb->queries)) {
     foreach (array_slice($sorted, 0, 5) as $q) {
         $GLOBALS['out'][] = sprintf("    %s | %s", ms($q[1]), substr($q[0], 0, 120));
     }
+    $GLOBALS['out'][] = '';
 } else {
     row('Queries (estimate)', $wpdb->num_queries . ' (add SAVEQUERIES=true for detail)',
         $wpdb->num_queries > 100 ? 'WARN' : 'OK');
