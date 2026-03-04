@@ -651,15 +651,13 @@ exec 1>&3 2>&3 3>&-
 # ambiguity that exists when stdout/stderr have been redirected mid-script
 _PY=$(mktemp)
 cat > "$_PY" <<'PYEOF'
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-import sys, re, io
+import sys, re
 
-with io.open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
     content = f.read()
 
-# Strip ANSI escape codes (compatible with Python 2 and 3)
-content = re.sub(u'\x1b\\[[0-9;]*m', u'', content)
+# Strip all ANSI/VT100 CSI escape sequences (colour codes, cursor movement, erase, etc.)
+content = re.sub(r'\033\[[0-9;?]*[A-Za-z]', '', content)
 
 # Replace box-drawing and symbol characters with ASCII equivalents
 replacements = {
@@ -680,29 +678,15 @@ replacements = {
 for char, replacement in replacements.items():
     content = content.replace(char, replacement)
 
-with io.open(sys.argv[2], 'w', encoding='utf-8') as f:
+with open(sys.argv[2], 'w', encoding='utf-8') as f:
     f.write(content)
 PYEOF
 
-_PYTHON=""
-for _py in python3 python; do
-    command -v "$_py" &>/dev/null && { _PYTHON="$_py"; break; }
-done
-
-if [[ -n "$_PYTHON" ]] && "$_PYTHON" "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
     rm -f "$REPORT_TMPFILE" "$_PY"
     echo ""
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
-    rm -f "$_PY"
-    # Fallback: sed-based ANSI stripping (Unicode symbols not converted)
-    sed 's/\x1b\[[0-9;]*m//g' "$REPORT_TMPFILE" > "$REPORT_FILENAME" 2>/dev/null || true
-    rm -f "$REPORT_TMPFILE"
-    if [[ -s "$REPORT_FILENAME" ]]; then
-        echo ""
-        printf "\033[3;38;2;136;146;160m  Report saved (basic): %s\033[0m\n" "$REPORT_FILENAME"
-    else
-        echo ""
-        printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
-    fi
+    printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
+    rm -f "$REPORT_TMPFILE" "$_PY"
 fi
