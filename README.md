@@ -146,10 +146,11 @@ Composer and the profile command are installed to `~/.config` — no system-wide
 | **Environment Setup** | Configures `COMPOSER_HOME` and `WP_CLI_PACKAGES_DIR`, persists to `~/.profile` |
 | **Composer** | Installs Composer to `~/.config/composer.phar` if not already present |
 | **Profile Command** | Installs `wp-cli/profile-command` via WP-CLI package manager if not already installed |
-| **Stage Breakdown** | Bootstrap → main_query → template timing — flags stages over 200ms / 500ms |
-| **Hook Breakdown (bootstrap)** | All hooks fired during bootstrap, ordered by time |
-| **Spotlight** | Hooks that took ≥1ms — easier to identify real bottlenecks |
-| **Hook Breakdown (wp stage)** | Hooks fired during the main query / template stage |
+| **Stage Breakdown** | Bootstrap → main_query → template timing — flags stages over 200ms / 500ms; reports total callback invocations |
+| **Stage Drill-downs** | Separate per-stage hook tables for bootstrap, main_query, and template — all hooks ordered by time |
+| **Spotlight: Bootstrap** | Hooks within the bootstrap stage that took ≥1ms |
+| **Spotlight: All Stages** | Slow hooks (≥1ms) across all WordPress load stages — the most actionable view |
+| **Hook Spotlights** | Per-hook slow-callback breakdown for `init`, `plugins_loaded`, `rest_api_init`, `wp_enqueue_scripts`, `wp_head`, `wp_footer`, and `pre_get_posts` |
 | **Summary** | Positives and issues with timing thresholds and next-step recommendations |
 
 ---
