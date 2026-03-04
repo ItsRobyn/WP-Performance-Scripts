@@ -29,7 +29,7 @@ wp eval-file wp-perf-diag.php
 **Via temporary web access**
 Upload to WordPress root, visit with secret param, delete immediately after:
 ```
-https://example.com/wp-perf-diag.php?secret=wp-diag-2025
+https://example.com/wp-perf-diag.php?secret=pressable-diag
 ```
 Change the default secret by setting the env var `WP_DIAG_SECRET`.
 
