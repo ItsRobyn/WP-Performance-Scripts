@@ -244,7 +244,7 @@ echo -e "  │${SEC}                  wp-profile-diag.sh                      ${
 echo -e "  │${SEC}                 By Robyn × Claude AI                     ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
-printf "  ${BLD}%-20s${RST} %s\n" "Version" "1.0.0"
+printf "  ${BLD}%-20s${RST} %s\n" "Version" "1.0.1"
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 printf "  ${BLD}%-20s${RST} %s\n" "Site" "$SITE_URL"
 
