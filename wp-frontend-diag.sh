@@ -82,7 +82,7 @@ echo -e "  │${SEC}                   wp-frontend-diag.sh                    ${
 echo -e "  │${SEC}                  By Robyn × Claude AI                    ${PRI}│"
 echo -e "  └──────────────────────────────────────────────────────────┘${RST}"
 echo ""
-printf "  ${BLD}%-20s${RST} %s\n" "Version" "1.0.0"
+printf "  ${BLD}%-20s${RST} %s\n" "Version" "1.0.1"
 printf "  ${BLD}%-20s${RST} %s\n" "Generated" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 printf "  ${BLD}%-20s${RST} %s\n" "Site" "$TARGET_URL"
 
@@ -487,7 +487,7 @@ fi
 
 CF_STATUS=$(get_header "$HEADERS_WARM" "cf-cache-status")
 if [[ -n "$CF_STATUS" ]]; then
-    case "${CF_STATUS^^}" in
+    case "$(echo "$CF_STATUS" | tr '[:lower:]' '[:upper:]')" in
         HIT|REVALIDATED|UPDATING) good "Cloudflare cache: $CF_STATUS" ;;
         MISS)   warn "Cloudflare MISS — page not yet cached or cache bypassed" ;;
         BYPASS) warn "Cloudflare BYPASS — caching may be disabled for this URL" ;;
