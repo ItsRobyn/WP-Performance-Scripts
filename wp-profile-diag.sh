@@ -647,46 +647,38 @@ sleep 1; kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || t
 # Restore both stdout and stderr to the terminal so python errors are visible
 exec 1>&3 2>&3 3>&-
 
-# Write the processing script to its own temp file — avoids stdin/heredoc
-# ambiguity that exists when stdout/stderr have been redirected mid-script
-_PY=$(mktemp)
-cat > "$_PY" <<'PYEOF'
-import sys, re
+# Use PHP for report processing — guaranteed available on any WordPress server,
+# unlike python3. Mirrors the approach used in wp-perf-diag.php.
+_PHP=$(mktemp)
+cat > "$_PHP" <<'PHPEOF'
+<?php
+$content = file_get_contents($argv[1]);
+// Strip all ANSI/VT100 CSI escape sequences (colour, cursor movement, erase, etc.)
+$content = preg_replace('/\033\[[0-9;?]*[A-Za-z]/', '', $content);
+// Replace box-drawing and symbol characters with ASCII equivalents
+$content = strtr($content, [
+    '┌' => '+', '─' => '-', '┐' => '+',
+    '└' => '+', '┘' => '+', '│' => '|',
+    '—' => '--', '–' => '-',
+    '→' => '->',
+    '…' => '...',
+    '×' => 'x',
+    '↳' => '>',
+    '⚠' => '!',
+    '✓' => '+',
+    '✗' => 'x',
+    '•' => '*',
+    '▶' => '>',
+    '≥' => '>=',
+]);
+file_put_contents($argv[2], $content);
+PHPEOF
 
-with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
-    content = f.read()
-
-# Strip all ANSI/VT100 CSI escape sequences (colour codes, cursor movement, erase, etc.)
-content = re.sub(r'\033\[[0-9;?]*[A-Za-z]', '', content)
-
-# Replace box-drawing and symbol characters with ASCII equivalents
-replacements = {
-    '┌': '+', '─': '-', '┐': '+',
-    '└': '+', '┘': '+', '│': '|',
-    '—': '--', '–': '-',
-    '→': '->',
-    '…': '...',
-    '×': 'x',
-    '↳': '>',
-    '⚠': '!',
-    '✓': '+',
-    '✗': 'x',
-    '•': '*',
-    '▶': '>',
-    '≥': '>=',
-}
-for char, replacement in replacements.items():
-    content = content.replace(char, replacement)
-
-with open(sys.argv[2], 'w', encoding='utf-8') as f:
-    f.write(content)
-PYEOF
-
-if python3 "$_PY" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
-    rm -f "$REPORT_TMPFILE" "$_PY"
+if php "$_PHP" "$REPORT_TMPFILE" "$REPORT_FILENAME"; then
+    rm -f "$REPORT_TMPFILE" "$_PHP"
     echo ""
     printf "\033[3;38;2;136;146;160m  Report saved: %s\033[0m\n" "$REPORT_FILENAME"
 else
     printf "\033[33m  Could not write report to: %s\033[0m\n" "$REPORT_FILENAME"
-    rm -f "$REPORT_TMPFILE" "$_PY"
+    rm -f "$REPORT_TMPFILE" "$_PHP"
 fi
